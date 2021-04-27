@@ -21,11 +21,14 @@ from modelFast import TransformerEncoder, EncoderLSTM, AttnDecoderLSTM, Coground
     ProgressMonitor, DeviationMonitor, EncoderLSTMGlove
 from modelFast import SpeakerEncoderLSTM, DotScorer
 from modelFast import Pointer,DectPointer
-from follower import Seq2SeqAgent, AgentMemory
+from follower import Seq2SeqAgent
 from scorer import Scorer
 # import evalFast
 
 from vocab import SUBTRAIN_VOCAB, TRAINVAL_VOCAB, TRAIN_VOCAB
+#edit --
+import pdb
+#--
 
 MAX_INPUT_LENGTH = 80 # TODO make this an argument
 max_episode_len = 10
@@ -72,11 +75,6 @@ def eval_model(agent, results_path, use_dropout, feedback, allow_cheat=False):
 def train(args, train_env, agent, optimizers, n_iters, log_every=log_every, val_envs=None):
     ''' Train on training set, validating on both seen and unseen. '''
 
-    # ---- Sanmi edits and inclusions
-    agent.ppo_memory = AgentMemory()
-    M = 320 
-    # ---
-    
     if val_envs is None:
         val_envs = {}
 
@@ -106,7 +104,6 @@ def train(args, train_env, agent, optimizers, n_iters, log_every=log_every, val_
         # Train for log_every interval
         env_name = 'train'
         agent.train(optimizers, interval, feedback=args.feedback_method)
-        import pdb;pdb.set_trace()
         _loss_str, losses = agent.get_loss_info()
         loss_str += env_name + ' ' + _loss_str
         for k,v in losses.items():
@@ -318,7 +315,6 @@ def make_env_and_models(args, train_vocab_path, train_splits, test_splits):
             agent.pointer.wtoi = train_env.wtoi
         else:
             agent.pointer.wtoi = test_envs[test_splits[0]][0].wtoi
-
     return train_env, test_envs, agent
 
 

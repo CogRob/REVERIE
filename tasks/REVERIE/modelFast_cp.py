@@ -678,7 +678,6 @@ class CogroundDecoderLSTM(nn.Module):
         self.action_attention_layer = WhSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         #self.action_attention_layer = VisualSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         self.sm = nn.Softmax(dim=1)
-        self.value_net = nn.Linear(in_features=visual_hidden_size,out_features=1)
 
     def forward(self, u_t_prev, all_u_t, visual_context, h_0, c_0, ctx,
                 ctx_mask=None):
@@ -709,8 +708,8 @@ class CogroundDecoderLSTM(nn.Module):
         #action_selector = self.drop(torch.cat((attn_text, h_1), 1))
         action_selector = torch.cat((attn_text, h_1), 1)
         _, alpha_action = self.action_attention_layer(action_selector,g_v)
-        value = self.value_net(action_selector)
-        return h_1,c_1,attn_text,attn_vision,alpha_text,alpha_action,alpha_vision, value
+        import pdb;pdb.set_trace()
+        return h_1,c_1,attn_text,attn_vision,alpha_text,alpha_action,alpha_vision
 
 
 class ProgressMonitor(nn.Module):

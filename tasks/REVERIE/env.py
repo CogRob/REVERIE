@@ -28,7 +28,7 @@ import pickle
 import re
 import sys
 import itertools
-
+import pdb
 
 sys.path.insert(0, osp.join(root_path,'MAttNet3','pyutils','refer') )
 from refer import REFER
@@ -387,7 +387,7 @@ class MeanPooledImageFeatures(ImageFeatures):
             long_id: np.concatenate(feats, axis=1)
             for long_id, feats in self.features.items()
         }
-
+        
     def _make_id(self, scanId, viewpointId):
         return scanId + '_' + viewpointId
 
