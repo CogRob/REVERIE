@@ -708,7 +708,6 @@ class CogroundDecoderLSTM(nn.Module):
         #action_selector = self.drop(torch.cat((attn_text, h_1), 1))
         action_selector = torch.cat((attn_text, h_1), 1)
         _, alpha_action = self.action_attention_layer(action_selector,g_v)
-        import pdb;pdb.set_trace()
         return h_1,c_1,attn_text,attn_vision,alpha_text,alpha_action,alpha_vision
 
 

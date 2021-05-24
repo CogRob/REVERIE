@@ -88,7 +88,8 @@ if __name__ == '__main__':
 
     splits = ['val_seen','val_unseen', 'test']#
     evalType = 'whole'
-    experimentName = 'releaseCheck'
+    #experimentName = 'releaseCheck'
+    experimentName = 'ppo_exp_test'
     resBaseDir = 'tasks/REVERIE/experiments/%s/results/'%experimentName
 
     vocabPath = osp.join(root_path,'MAttNet3','cache','prepro','reverie4_reverie4','vocab.txt')

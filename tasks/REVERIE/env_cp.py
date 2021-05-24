@@ -620,7 +620,7 @@ class EnvBatch():
     def newEpisodes(self, scanIds, viewpointIds, headings, beamed=False):
         assert len(scanIds) == len(viewpointIds)
         assert len(headings) == len(viewpointIds)
-        #assert len(scanIds) == len(self.sims)
+        assert len(scanIds) == len(self.sims)
         world_states = []
         for i, (scanId, viewpointId, heading) in enumerate(zip(scanIds, viewpointIds, headings)):
             world_state = WorldState(scanId, viewpointId, heading, 0)
@@ -723,8 +723,7 @@ class R2RBatch():
         self.batch_size = batch_size
         self._load_nav_graphs()
         self.set_beam_size(beam_size)
-        self.print_progress = True
-        #self.print_progress = False
+        self.print_progress = False
         print('REVERIE Batch loaded with %d instructions, using splits: %s' % (len(self.data), ",".join(splits)))
         self.batch = self.data
         self.notTest = ('test' not in splits)
@@ -816,21 +815,13 @@ class R2RBatch():
     def _next_minibatch(self, sort_instr_length):
         batch = self.data[self.ix:self.ix+self.batch_size]
         if self.print_progress:
-            print("Printing Progress:")
             sys.stderr.write("\rix {} / {}".format(self.ix, len(self.data)))
         if len(batch) < self.batch_size:
-            #Training
-            '''
-            self.ix += len(batch)
-            '''
-            #Eval Not training
-            #'''
             random.shuffle(self.data)
             for i,item in enumerate(self.data):
                 self.instr_id_to_idx[item['instr_id']] = i
             self.ix = self.batch_size - len(batch)
-            batch += self.data[:self.ix] 
-            #'''
+            batch += self.data[:self.ix]
         else:
             self.ix += self.batch_size
         if sort_instr_length:
@@ -949,7 +940,7 @@ class R2RBatch():
         ''' Load a new minibatch / episodes. '''
         if load_next_minibatch:
             self._next_minibatch(sort)
-        #assert len(self.batch) == self.batch_size
+        assert len(self.batch) == self.batch_size
         return self.get_starting_world_states(self.batch, beamed=beamed)
 
     def step(self, world_states, actions, last_obs, beamed=False):

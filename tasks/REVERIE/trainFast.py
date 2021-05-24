@@ -33,7 +33,8 @@ max_episode_len = 10
 
 hidden_size = 512
 dropout_ratio = 0.5
-learning_rate = 0.0001
+#learning_rate = 0.0001
+learning_rate = 0.00001
 weight_decay = 0.0005
 
 log_every = 100
@@ -74,7 +75,6 @@ def train(args, train_env, agent, optimizers, n_iters, log_every=log_every, val_
 
     # ---- Sanmi edits and inclusions
     agent.ppo_memory = AgentMemory()
-    M = 320 
     # ---
     
     if val_envs is None:
@@ -106,7 +106,8 @@ def train(args, train_env, agent, optimizers, n_iters, log_every=log_every, val_
         # Train for log_every interval
         env_name = 'train'
         agent.train(optimizers, interval, feedback=args.feedback_method)
-        import pdb;pdb.set_trace()
+        print("Cuda Memory:", torch.cuda.memory_allocated())
+        #import pdb;pdb.set_trace()
         _loss_str, losses = agent.get_loss_info()
         loss_str += env_name + ' ' + _loss_str
         for k,v in losses.items():
@@ -416,7 +417,8 @@ def make_arg_parser():
     parser.add_argument("--dev_monitor", action='store_true')
     parser.add_argument("--bt_button", action='store_true')
     parser.add_argument("--soft_align", action='store_true')
-    parser.add_argument("--n_iters", type=int, default=10900)
+    parser.add_argument("--n_iters", type=int, default=16400)
+    #parser.add_argument("--n_iters", type=int, default=10900)
     parser.add_argument("--num_head", type=int, default=1)
     parser.add_argument("--use_pretraining", action='store_true')
     parser.add_argument("--grad", type=str, default='all')

@@ -244,8 +244,11 @@ def main(args):
 if __name__ == "__main__":
     jobs=['search', 'test']
     experiment_name = 'releaseCheck'
+    experiment_name = 'ppo_exp_test'
     load_follower='tasks/REVERIE/experiments/%s/snapshots/'%experiment_name+\
         'NP_cg_pm_sample2step_imagenet_mean_pooled_1heads_train_iter_10900'
+    load_follower='tasks/REVERIE/experiments/%s/snapshots/'%experiment_name+\
+        'NP_cg_pm_sample2step_imagenet_mean_pooled_1heads_train_iter_16400'
     max_episode_len=40
     K=20
     logit=True

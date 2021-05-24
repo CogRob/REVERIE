@@ -287,7 +287,7 @@ class ShortestAgent(BaseAgent):
         ]
 
 class AgentMemory():
-    def __init__(self, ppo_mini_epoch=3,ppo_batch_size=None, ppo_memory_size=460):
+    def __init__(self, ppo_mini_epoch=10,ppo_batch_size=None, ppo_memory_size=460):
         #Trajectories is a disctionary that sotres the 6 atrabuites (action,obs,..)
         #of an step untill the episode is completed. Keys are batch episode. 
         self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
@@ -307,9 +307,15 @@ class AgentMemory():
     
     def _caculate_reward(self,action,target_action, target_distance=0):
         if action == target_action:
-            return 5
+            distance_reward = 1/(target_distance+.1) *20
+            reward = 5 + distance_reward
+            #print("Reward:", reward)
+            return reward
         else:
-            return -2
+            distance_reward = 1/(target_distance+.1) *20
+            reward = -7 + distance_reward
+            #print("Reward:", reward)
+            return reward
 
     def store_history(self, obs, actions, probs, vals, target_actions, target_distances):
         for i in range(0,len(actions)):
@@ -322,7 +328,7 @@ class AgentMemory():
             else:
                 done = False
             
-            reward = self._caculate_reward(actions[i], target_actions[i])
+            reward = self._caculate_reward(actions[i], target_actions[i],target_distances[i])
             
             ob = (obs[0][i],obs[1][i],obs[2][i],obs[3][i],obs[4][i],obs[5][i], obs[6][i])
             self.trajectories[str(i)][0].append(ob) 
@@ -468,61 +474,90 @@ class AgentMemory():
             reward_arr, done_arr, advantages_arr, batches = self.generate_mixed_batch()
            
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        advantages = torch.tensor(advantages_arr).float().to(device)
-        
-        #for _ in range(self.mini_epoch):
-        for i in range(0,len(batches)):
-            start = batches[i]
-            if i+1 > len(batches) -1:
-                end = len(self.obs)
-            else:
-                end = batches[i+1] -1 
-            states = states_arr[start:end] 
-            old_probs = torch.tensor(old_probs_arr[start:end])
-            actions = torch.tensor(action_arr[start:end])
-
-            u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [],[],[],[],[],[],[]
-            for item in states:
-                u_t_prev.append(item[0])
-                all_u_t.append(item[1])
-                f_t_list.append(item[2])
-                h_t.append(item[3])
-                c_t.append(item[4])
-                ctx.append(item[5])
-                seq_mask.append(item[6])
             
-            u_t_prev = torch.stack(u_t_prev)
-            all_u_t = torch.stack(all_u_t)
-            f_t_list = torch.stack(f_t_list)
-            h_t = torch.stack(h_t)
-            c_t = torch.stack(c_t) 
-            ctx = torch.stack(ctx)
-            seq_mask = torch.stack(seq_mask) 
-            
-            h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = decoder(u_t_prev,\
-                 all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
-            dist = D.Categorical(logits=logit)
-            
-
-            #actions.to(device) 
-            actions = actions.cuda()
-            
-            new_probs = dist.log_prob(actions)
-            
-            old_probs = old_probs.cuda()
-            prob_ratio = (new_probs - old_probs).exp()
-
-            
-            weighted_probs = advantages[start:end].to(device) * prob_ratio
-            weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip,1+policy_clip)\
-                    * advantages[start:end]
-            loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
-
-            loss.backward()
-            for opt in optimizers:
-                opt.step()
+        for _ in range(self.mini_epoch):
+            for i in range(0,len(batches)):
+                start = batches[i]
+                if i+1 > len(batches) -1:
+                    end = len(self.obs)
+                else:
+                    end = batches[i+1] -1 
                 
-        
+                states = states_arr[start:end]
+                actions = action_arr[start:end]
+                old_probs = old_probs_arr[start:end]
+                values = vals_arr[start:end]
+                dones = done_arr[start:end]
+                advantages = advantages_arr[start:end]
+                
+                temp = list(zip(states,actions,old_probs,values,dones,advantages))
+                random.shuffle(temp)
+                states, actions, old_probs, values,dones, advantages = zip(*temp)
+                
+                #start learning
+                old_probs = torch.tensor(old_probs)
+                actions = torch.tensor(actions)
+                advantages = torch.tensor(advantages).float().to(device)
+                
+                u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [],[],[],[],[],[],[]
+                for item in states:
+                    u_t_prev.append(item[0])
+                    all_u_t.append(item[1])
+                    f_t_list.append(item[2])
+                    h_t.append(item[3])
+                    c_t.append(item[4])
+                    ctx.append(item[5])
+                    seq_mask.append(item[6])
+                
+                u_t_prev = torch.stack(u_t_prev)
+                all_u_t = torch.stack(all_u_t)
+                f_t_list = torch.stack(f_t_list)
+                h_t = torch.stack(h_t)
+                c_t = torch.stack(c_t) 
+                ctx = torch.stack(ctx)
+                seq_mask = torch.stack(seq_mask) 
+                
+                h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = decoder(u_t_prev,\
+                     all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
+                
+                #import pdb;pdb.set_trace()
+                dist = D.Categorical(logits=logit)
+                
+                actions = actions.cuda()
+                
+                new_probs = dist.log_prob(actions)
+                
+                old_probs = old_probs.cuda()
+                ratio = new_probs - old_probs
+                prob_ratio = (ratio).exp()
+
+                
+                weighted_probs = advantages * prob_ratio
+                weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip,1+policy_clip)\
+                        * advantages
+                loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
+                
+                #try:
+                #rint("loss:", loss)
+                #except:
+                #print("loss to big")
+                    #import pdb; pdb.set_trace()
+                
+                for opt in optimizers:
+                    opt.zero_grad()
+                loss.backward()
+                for opt in optimizers:
+                    opt.step() 
+
+
+        states_arr.clear()
+        action_arr.clear()
+        old_probs_arr.clear()
+        vals_arr.clear()
+        reward_arr.clear()
+        done_arr.clear()
+        advantages_arr.clear()
+        batches.clear()
 
         self.clear_history()
         return loss.item()
@@ -744,6 +779,12 @@ class Seq2SeqAgent(BaseAgent):
             t[i] = ob['progress'][0] if not ended[i] else monitor_score[i].item()
             #t[i] = ob['progress'][0] if not ended[i] else 1.0
         return try_cuda(torch.tensor(t, requires_grad=False)), num_elem
+    
+    def _distance_target(self, obs, ended):
+        t = [None] * len(obs)
+        for i,ob in enumerate(obs):
+            t[i] = ob['distance'][0] if not ended[i] else -1 
+        return try_cuda(torch.tensor(t, requires_grad=False))
 
     def _progress_soft_align(self, alpha_t, seq_lengths):
         if not hasattr(self,'dummy'):
@@ -956,10 +997,12 @@ class Seq2SeqAgent(BaseAgent):
            
             # Supervised training
             target = self._teacher_action(obs, ended)
-            self.ce_loss += ce_criterion(logit, target)
+            #self.ce_loss += ce_criterion(logit, target)
             total_num_elem += np.size(ended) - np.count_nonzero(ended)
 
-            
+            #if self.it_indx == 34:
+            #import pdb;pdb.set_trace()
+
             # Determine next model inputs
             if feedback == 'teacher':
                 # turn -1 (ignore) to 0 (stop) so that the action is executable
@@ -1026,7 +1069,8 @@ class Seq2SeqAgent(BaseAgent):
             ppo_ht, ppo_ct = h_t, c_t
             ppo_obs = [u_t_prev.detach(), all_u_t.detach(), f_t_list[0].detach(), ppo_ht.detach(),\
                     ppo_ct.detach(), ctx.detach(), seq_mask.detach()]
-            self.ppo_memory.store_history(ppo_obs, a_t.detach() , probs, value, target, target_score)
+            target_distance = self._distance_target(obs, ended)
+            self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance)
             #========================================  
             # update
             world_states = self.env.step(world_states, env_action, obs)
@@ -1055,7 +1099,7 @@ class Seq2SeqAgent(BaseAgent):
         # per step loss
         if self.phase == 'train':
             if self.prog_monitor or self.soft_align:
-                self.loss = 0.5*self.ce_loss + 0.5*self.pm_loss
+                #self.loss = 0.5*self.ce_loss + 0.5*self.pm_loss
                 self.pm_losses.append(self.pm_loss.item())
             else:
                 self.loss = self.ce_loss
@@ -1100,7 +1144,9 @@ class Seq2SeqAgent(BaseAgent):
         world_states = self.env.reset(sort=True)
         obs = self.env.observe(world_states)# get panoramic feature and adjacent vps and corresponding action
         batch_size = len(obs)
-
+        
+        if not obs or len(obs) == 0:
+            import pdb; pdb.set_trace()
         seq, seq_mask, seq_lengths = self._proc_batch(obs)
         ctx,h_t,c_t = self.encoder(seq, seq_lengths)
 
@@ -1174,7 +1220,7 @@ class Seq2SeqAgent(BaseAgent):
             all_u_t, is_valid, _ = self._action_variable(obs) # t=0, how
 
             # 1. local scorer
-            h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v = self.decoder(
+            h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = self.decoder(
                 u_t_prev, all_u_t, f_t_list[0], prev_h_t, prev_c_t, ctx, seq_mask)
 
             # 2. prog monitor
@@ -1857,7 +1903,7 @@ class Seq2SeqAgent(BaseAgent):
         self.dv_losses = []
         self.pm_losses = []
         self.bt_losses = []
-        it = range(1, n_iters + 1)
+        #it = range(1, n_iters + 1)
         try:
             import tqdm
             it = tqdm.tqdm(it)
@@ -1865,31 +1911,34 @@ class Seq2SeqAgent(BaseAgent):
             pass
         self.attn_t = np.zeros((n_iters,self.episode_len,self.env.batch_size,80))
         #import pdb;pdb.set_trace()
-        for self.it_idx in it:
-            if self.it_idx == 34:
-                import pdb; pdb.set_trace()
-            for opt in optimizers:
-                opt.zero_grad()
-            self.rollout()
-            #self._rollout_with_loss()
+        '''Sanmi Edit:  Editing for loop to change hyperparameters of how often it runs'''
+        #for self.it_idx in it:
+        ''' Every thing below shifted < 1'''
+        #if self.it_idx == 34:
+        #import pdb; pdb.set_trace()
+        '''for opt in optimizers:
+            opt.zero_grad()
+        '''
+        self.rollout()
+        #self._rollout_with_loss()
 
-            #------Sanmi Edits 
-            #We have batches of 64 that run for 10 steps at most. 
-            # Inside a loop that runs 100 times. We collecte trajectory 
-            # for each batch, caculate the advantages and update once we
-            # we have 640 sets of (s,a).
-            self.ppo_memory.calc_advantages()
-            print("Memorry:",len(self.ppo_memory.obs))
-            if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
-                print("Learning-----")
-                loss = self.ppo_memory.learn(self.decoder,optimizers)
-                self.losses.append(loss)
-            #-------------
-            #Sanmi - ommented lines bleow. 
-            '''if type(self.loss) is torch.Tensor:
-                self.loss.backward()
-            for opt in optimizers:
-                opt.step()'''
+        #------Sanmi Edits 
+        #We have batches of 64 that run for 10 steps at most. 
+        # Inside a loop that runs 100 times. We collecte trajectory 
+        # for each batch, caculate the advantages and update once we
+        # we have 640 sets of (s,a).
+        self.ppo_memory.calc_advantages() 
+
+        if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
+            print("Learning -----------------------------")
+            loss = self.ppo_memory.learn(self.decoder,optimizers)
+            self.losses.append(loss)
+        #-------------
+        #Sanmi - ommented lines bleow. 
+        '''if type(self.loss) is torch.Tensor:
+            self.loss.backward()
+        for opt in optimizers:
+            opt.step()'''
 
     def _encoder_and_decoder_paths(self, base_path):
         return base_path + "_enc", base_path + "_dec"
