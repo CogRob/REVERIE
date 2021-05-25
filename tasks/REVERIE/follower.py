@@ -291,7 +291,7 @@ class AgentMemory():
         #Trajectories is a disctionary that sotres the 6 atrabuites (action,obs,..)
         #of an step untill the episode is completed. Keys are batch episode. 
         self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
-        #self.trajectories = [[],[],[],[],[],[]] for i in range(0,64)]
+        #self.trajectories = [ [[],[],[],[],[],[]] for i in range(0,64)]
         
         self.obs = []
         self.actions = []
@@ -329,14 +329,15 @@ class AgentMemory():
                 done = False
             
             reward = self._caculate_reward(actions[i], target_actions[i],target_distances[i])
-            
+
             ob = (obs[0][i],obs[1][i],obs[2][i],obs[3][i],obs[4][i],obs[5][i], obs[6][i])
-            self.trajectories[str(i)][0].append(ob) 
-            self.trajectories[str(i)][1].append(actions[i].item())
-            self.trajectories[str(i)][2].append(probs[i])
-            self.trajectories[str(i)][3].append(vals[i].item())
-            self.trajectories[str(i)][4].append(reward)
-            self.trajectories[str(i)][5].append(done)
+            i_str = str(i) 
+            self.trajectories[i_str][0].append(ob) 
+            self.trajectories[i_str][1].append(actions[i].item())
+            self.trajectories[i_str][2].append(probs[i])
+            self.trajectories[i_str][3].append(vals[i].item())
+            self.trajectories[i_str][4].append(reward)
+            self.trajectories[i_str][5].append(done)
 
     def clear_history(self):
         self.obs = []
@@ -537,12 +538,14 @@ class AgentMemory():
                         * advantages
                 loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
                 
-                #try:
-                #rint("loss:", loss)
-                #except:
-                #print("loss to big")
-                    #import pdb; pdb.set_trace()
-                
+                '''
+                try:
+                    print("loss:", loss)
+                except:
+                    print("loss to big")
+                    import pdb; pdb.set_trace()
+                '''
+
                 for opt in optimizers:
                     opt.zero_grad()
                 loss.backward()

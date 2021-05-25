@@ -33,8 +33,8 @@ max_episode_len = 10
 
 hidden_size = 512
 dropout_ratio = 0.5
-#learning_rate = 0.0001
-learning_rate = 0.00001
+learning_rate = 0.0001
+learning_rate_ppo = 0.00001  #0.000007
 weight_decay = 0.0005
 
 log_every = 100
@@ -387,8 +387,19 @@ def train_val(args):
         m_dict['scorer_all'] = agent.scorer.modules()
         m_dict['scorer_scorer'] = [agent.scorer.scorer]
 
-    optimizers = [optim.Adam(filter_param(m), lr=learning_rate,
-        weight_decay=weight_decay) for m in m_dict[args.grad] if len(filter_param(m))]
+    #optimizers = [optim.Adam(filter_param(m), lr=learning_rate,
+    #    weight_decay=weight_decay) for m in m_dict[args.grad] if len(filter_param(m)) ]
+    optimizers = []
+    for m in m_dict[args.grad]:
+        if len(filter_param(m)):
+            if len(filter_param(m)) == 18:
+                temp = optim.Adam(filter_param(m), lr=learning_rate_ppo, weight_decay=weight_decay)
+                optimizers.append(temp)
+            
+            else:
+                temp = optim.Adam(filter_param(m), lr=learning_rate, weight_decay=weight_decay)
+                optimizers.append(temp)
+
     optimizers.append(optim.Adam(filter_param(agent.objLabelEncoder), lr=learning_rate,
         weight_decay=weight_decay) )
     if args.use_pretraining:

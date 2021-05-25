@@ -820,17 +820,17 @@ class R2RBatch():
             sys.stderr.write("\rix {} / {}".format(self.ix, len(self.data)))
         if len(batch) < self.batch_size:
             #Training
-            '''
-            self.ix += len(batch)
-            '''
-            #Eval Not training
             #'''
+            self.ix += len(batch)
+            #'''
+            #Eval Not training
+            '''
             random.shuffle(self.data)
             for i,item in enumerate(self.data):
                 self.instr_id_to_idx[item['instr_id']] = i
             self.ix = self.batch_size - len(batch)
             batch += self.data[:self.ix] 
-            #'''
+            '''
         else:
             self.ix += self.batch_size
         if sort_instr_length:
