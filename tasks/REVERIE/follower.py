@@ -287,7 +287,7 @@ class ShortestAgent(BaseAgent):
         ]
 
 class AgentMemory():
-    def __init__(self, ppo_mini_epoch=10,ppo_batch_size=None, ppo_memory_size=460):
+    def __init__(self, ppo_mini_epoch=5,ppo_batch_size=None, ppo_memory_size=460):
         #Trajectories is a disctionary that sotres the 6 atrabuites (action,obs,..)
         #of an step untill the episode is completed. Keys are batch episode. 
         self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
@@ -366,7 +366,7 @@ class AgentMemory():
                         advt += discount*(reward_arr[k]+gamma*vals_arr[k+1]*\
                                 (1-int(done_arr[k])) - vals_arr[k])
                         discount *= gamma* gae_lambda
-                   
+                    
                     self.obs.append(states_arr[t])
                     self.actions.append(action_arr[t])
                     self.log_probs.append(old_probs_arr[t])
@@ -374,7 +374,7 @@ class AgentMemory():
                     self.rewards.append(reward_arr[t])
                     self.dones.append(done_arr[t])
                     self.advantages.append(advt)
-
+            
             else:
                 discount = 1
                 advt = discount * (reward_arr[0] - vals_arr[0])
@@ -389,8 +389,9 @@ class AgentMemory():
         self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
 
     def _sorting(self, start,end,pos):
+        #Sorting Using insertion sort
         for i in range(start+1, end):
-
+            
             obs_holder = self.obs[i]
             actions_holder = self.actions[i]
             log_p_holder = self.log_probs[i]
@@ -434,6 +435,7 @@ class AgentMemory():
     def generate_mixed_batch(self):
         #some of states obs are of different sizes. We need to sort and group them 
         #Pos = 1 for 'all_u_t'
+        #Pos = 5 for 'ctx' 
         self._sorting(0,len(self.obs),1)
  
         batch_start_1  = self._batch_interval(0,len(self.obs),1)
@@ -470,7 +472,7 @@ class AgentMemory():
                 self.advantages,\
                 batch_start_6
 
-    def learn(self, decoder, optimizers, policy_clip=0.2): 
+    def learn(self, decoder, optimizers,losses_list, policy_clip=0.2): 
         states_arr, action_arr, old_probs_arr, vals_arr,\
             reward_arr, done_arr, advantages_arr, batches = self.generate_mixed_batch()
            
@@ -487,19 +489,22 @@ class AgentMemory():
                 states = states_arr[start:end]
                 actions = action_arr[start:end]
                 old_probs = old_probs_arr[start:end]
-                values = vals_arr[start:end]
+                values = torch.tensor(vals_arr[start:end]).float().to(device)
                 dones = done_arr[start:end]
                 advantages = advantages_arr[start:end]
+                rewards = reward_arr[start:end]
                 
-                temp = list(zip(states,actions,old_probs,values,dones,advantages))
-                random.shuffle(temp)
-                states, actions, old_probs, values,dones, advantages = zip(*temp)
+                #temp = list(zip(states,actions,old_probs,values,dones,advantages))
+                #random.shuffle(temp)
+                #states, actions, old_probs, values,dones, advantages = zip(*temp)
                 
                 #start learning
                 old_probs = torch.tensor(old_probs)
                 actions = torch.tensor(actions)
                 advantages = torch.tensor(advantages).float().to(device)
-                
+                #advantages = (adv - torch.mean(adv)) / (torch.std(adv) + 1e-8)
+
+
                 u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [],[],[],[],[],[],[]
                 for item in states:
                     u_t_prev.append(item[0])
@@ -521,7 +526,7 @@ class AgentMemory():
                 h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = decoder(u_t_prev,\
                      all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
                 
-                #import pdb;pdb.set_trace()
+                #Actor Loss
                 dist = D.Categorical(logits=logit)
                 
                 actions = actions.cuda()
@@ -531,13 +536,18 @@ class AgentMemory():
                 old_probs = old_probs.cuda()
                 ratio = new_probs - old_probs
                 prob_ratio = (ratio).exp()
-
-                
+ 
                 weighted_probs = advantages * prob_ratio
                 weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip,1+policy_clip)\
                         * advantages
-                loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
+                ppo_loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
                 
+                #Critic loss
+                returns = advantages + values 
+                critic_loss = ( returns - value) **2
+                critic_loss =  critic_loss.mean()
+                
+                loss = ppo_loss + 0.5*critic_loss # - (0.01* dist.entropy().mean())
                 '''
                 try:
                     print("loss:", loss)
@@ -551,7 +561,8 @@ class AgentMemory():
                 loss.backward()
                 for opt in optimizers:
                     opt.step() 
-
+                losses_list.append(loss.item())
+                del loss, critic_loss, ppo_loss, dist, h_t,c_t,t_ground,v_ground,logit,alpha_t,alpha_v,value 
 
         states_arr.clear()
         action_arr.clear()
@@ -561,10 +572,11 @@ class AgentMemory():
         done_arr.clear()
         advantages_arr.clear()
         batches.clear()
-
+        del states_arr,action_arr, old_probs_arr, vals_arr, reward_arr, done_arr, advantages_arr, batches
         self.clear_history()
-        return loss.item()
-    
+        del self.obs, self.actions, self.log_probs
+        self.clear_history()
+         
        
 
 
@@ -953,6 +965,8 @@ class Seq2SeqAgent(BaseAgent):
 
 
         for t in range(self.episode_len):
+            #import GPUtil
+            #GPUtil.showUtilization()
             f_t_list = self._feature_variables(obs) # Image features from obs
             all_u_t, is_valid, _ = self._action_variable(obs) # add obj feature
 
@@ -1074,6 +1088,7 @@ class Seq2SeqAgent(BaseAgent):
                     ppo_ct.detach(), ctx.detach(), seq_mask.detach()]
             target_distance = self._distance_target(obs, ended)
             self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance)
+            #print("\nDone -------- Storing PPO Memory ----------")
             #========================================  
             # update
             world_states = self.env.step(world_states, env_action, obs)
@@ -1111,8 +1126,7 @@ class Seq2SeqAgent(BaseAgent):
                 self.dv_losses.append(self.dv_loss.item())
             #Sanmi Edit -- 2 lines commented. 
             #self.losses.append(self.loss.item())
-            #self.ce_losses.append(self.ce_loss.item())
-        #import pdb;pdb.set_trace()
+            #self.ce_losses.append(self.ce_loss.item()) 
         return traj
 
     def _search_collect(self, batch_queue, wss, current_idx, ended):
@@ -1926,16 +1940,17 @@ class Seq2SeqAgent(BaseAgent):
         #self._rollout_with_loss()
 
         #------Sanmi Edits 
-        #We have batches of 64 that run for 10 steps at most. 
-        # Inside a loop that runs 100 times. We collecte trajectory 
+        #We have batches of 64 that run for 20 steps at most. 
+        # We collecte trajectory 
         # for each batch, caculate the advantages and update once we
-        # we have 640 sets of (s,a).
+        # we have 1280 sets of (s,a).
+        print("\nCaculating Advantages.._______________")
         self.ppo_memory.calc_advantages() 
 
-        if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
-            print("Learning -----------------------------")
-            loss = self.ppo_memory.learn(self.decoder,optimizers)
-            self.losses.append(loss)
+        #if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
+        print("\nLearning -----------------------------")
+        self.ppo_memory.learn(self.decoder,optimizers,self.losses)
+        
         #-------------
         #Sanmi - ommented lines bleow. 
         '''if type(self.loss) is torch.Tensor:

@@ -675,10 +675,17 @@ class CogroundDecoderLSTM(nn.Module):
                 nn.BatchNorm1d(visual_hidden_size),
                 nn.Dropout(dropout_ratio),
                 nn.ReLU())
+        '''
+        Quan suggested drobing batchNorm for RL algorithoms
+        self.visual_mlp = nn.Sequential(
+                nn.Linear(feature_size, visual_hidden_size),
+                nn.Dropout(dropout_ratio),
+                nn.ReLU())
+        '''
         self.action_attention_layer = WhSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         #self.action_attention_layer = VisualSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         self.sm = nn.Softmax(dim=1)
-        self.value_net = nn.Linear(in_features=visual_hidden_size,out_features=1)
+        self.value_net = nn.Linear(in_features=embedding_size+hidden_size,out_features=1)
 
     def forward(self, u_t_prev, all_u_t, visual_context, h_0, c_0, ctx,
                 ctx_mask=None):
@@ -709,8 +716,11 @@ class CogroundDecoderLSTM(nn.Module):
         #action_selector = self.drop(torch.cat((attn_text, h_1), 1))
         action_selector = torch.cat((attn_text, h_1), 1)
         _, alpha_action = self.action_attention_layer(action_selector,g_v)
-        value = self.value_net(action_selector)
+        #Sanmi Edits
+        val_concat_input = torch.cat((attn_text, attn_vision), 1)
+        value = self.value_net(val_concat_input)
         return h_1,c_1,attn_text,attn_vision,alpha_text,alpha_action,alpha_vision, value
+
 
 
 class ProgressMonitor(nn.Module):
