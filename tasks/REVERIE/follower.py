@@ -387,11 +387,23 @@ class AgentMemory():
 
             if len(reward_arr) != 1:
 
+                # From Quan: If I am not mistaken,
+                # This is only calculating the advantage up to the second last
+                # transitions.
+                # Is the adv for the last transition in the traj being calculated?
                 for t in range(len(reward_arr)-1):
 
                     discount = 1
                     advt = 0
 
+                    # From Quan: The way to calculate the adv looks right to me,
+                    # but this will be quite slow (about twice as slow)
+                    # because if the len(reward_arr) = N
+                    # then this is calculating with N + (N - 1) + ... + 1 \approx N^2 loop.
+                    # You can compute the advantages for all transitions by iterating backwards
+                    # from the end of the trajectory. It will be much faster.
+                    # For example, please check out
+                    # https://github.com/quanvuong/pytorch_ppo_mujoco/blob/099b8928567a2cae21274d52c05f6e546c77de14/train.py#L40
                     for k in range(t, len(reward_arr)-1):
 
                         advt += discount * (reward_arr[k] + gamma * vals_arr[k+1] * (1 - int(done_arr[k])) - vals_arr[k])  # nopep8
@@ -407,6 +419,9 @@ class AgentMemory():
 
             else:
                 discount = 1
+
+                # From Quan: Is it assumed that this is a terminal observation?
+                # Otherwise, we need to add gamma * val(next observation) to the advt.
                 advt = discount * (reward_arr[0] - vals_arr[0])
                 self.obs.append(states_arr[0])
                 self.actions.append(action_arr[0])
