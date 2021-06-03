@@ -605,6 +605,15 @@ class AgentMemory():
                 for opt in optimizers:
                     opt.zero_grad()
                 loss.backward()
+
+                # From Quan: to remove nan, you can do something like
+                # (the following code might have syntax error since I didn't run it)
+                # You also need to replace the model variable with the
+                # actual pytorch model variable name
+                # for params in model.parameters():
+                #     if params.requires_grad:
+                #         params.grad[params.grad != params.grad] = 0.0
+
                 for opt in optimizers:
                     opt.step()
                 losses_list.append(loss.item())
