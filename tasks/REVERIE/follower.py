@@ -18,12 +18,16 @@ from utilsFast import vocab_pad_idx, vocab_eos_idx, flatten, structured_map, try
 from utilsFast import PriorityQueue
 from running_mean_std import RunningMean
 
-InferenceState = namedtuple("InferenceState", "prev_inference_state, world_state, observation, flat_index, last_action, last_action_embedding, action_count, score, h_t, c_t, last_alpha")
-SearchState = namedtuple("SearchState", "flogit,flogp, world_state, observation, action, action_embedding, action_count, h_t,c_t,father") # flat_index,
-CandidateState = namedtuple("CandidateState", "flogit,flogp,world_states,actions,pm,speaker,scorer") # flat_index,
+InferenceState = namedtuple(
+    "InferenceState", "prev_inference_state, world_state, observation, flat_index, last_action, last_action_embedding, action_count, score, h_t, c_t, last_alpha")
+SearchState = namedtuple(
+    "SearchState", "flogit,flogp, world_state, observation, action, action_embedding, action_count, h_t,c_t,father")  # flat_index,
+CandidateState = namedtuple(
+    "CandidateState", "flogit,flogp,world_states,actions,pm,speaker,scorer")  # flat_index,
 Cons = namedtuple("Cons", "first, rest")
 
-MEMORY_STEPS = 0 
+MEMORY_STEPS = 0
+
 
 def cons_to_list(cons):
     l = []
@@ -33,6 +37,7 @@ def cons_to_list(cons):
         if cons is None:
             break
     return l
+
 
 def backchain_inference_states(last_inference_state):
     states = []
@@ -52,12 +57,14 @@ def backchain_inference_states(last_inference_state):
         last_score = inf_state.score
         inf_state = inf_state.prev_inference_state
     scores.append(last_score)
-    return list(reversed(states)), list(reversed(observations)), list(reversed(actions))[1:], list(reversed(scores))[1:], list(reversed(attentions))[1:] # exclude start action
+    # exclude start action
+    return list(reversed(states)), list(reversed(observations)), list(reversed(actions))[1:], list(reversed(scores))[1:], list(reversed(attentions))[1:]
+
 
 def least_common_viewpoint_path(inf_state_a, inf_state_b):
     # return inference states traversing from A to X, then from Y to B,
     # where X and Y are the least common ancestors of A and B respectively that share a viewpointId
-    path_to_b_by_viewpoint =  {
+    path_to_b_by_viewpoint = {
     }
     b = inf_state_b
     b_stack = Cons(b, None)
@@ -77,6 +84,7 @@ def least_common_viewpoint_path(inf_state_a, inf_state_b):
         path_from_a.append(a)
     raise AssertionError("no common ancestor found")
 
+
 def batch_instructions_from_encoded(encoded_instructions, max_length, reverse=False,
                                     sort=False, tok=None, addEos=True):
     # encoded_instructions: list of lists of token indices (should not be padded, or contain BOS or EOS tokens)
@@ -95,13 +103,14 @@ def batch_instructions_from_encoded(encoded_instructions, max_length, reverse=Fa
             inst = np.concatenate((inst, [vocab_eos_idx]))
         inst = inst[:max_length]
         if tok:
-            inst_mask.append(tok.filter_verb(inst,sel_verb=False)[1])
-        seq_tensor[i,:len(inst)] = inst
+            inst_mask.append(tok.filter_verb(inst, sel_verb=False)[1])
+        seq_tensor[i, :len(inst)] = inst
         seq_lengths.append(len(inst))
 
     seq_tensor = torch.from_numpy(seq_tensor)
     if sort:
-        seq_lengths, perm_idx = torch.from_numpy(np.array(seq_lengths)).sort(0, True)
+        seq_lengths, perm_idx = torch.from_numpy(
+            np.array(seq_lengths)).sort(0, True)
         seq_lengths = list(seq_lengths)
         seq_tensor = seq_tensor[perm_idx]
     else:
@@ -110,20 +119,23 @@ def batch_instructions_from_encoded(encoded_instructions, max_length, reverse=Fa
     mask = (seq_tensor == vocab_pad_idx)[:, :max(seq_lengths)]
 
     if tok:
-        for i,idx in enumerate(perm_idx):
+        for i, idx in enumerate(perm_idx):
             mask[i][inst_mask[idx]] = 1
 
     ret_tp = try_cuda(Variable(seq_tensor, requires_grad=False).long()), \
-             try_cuda(mask), \
-             seq_lengths
+        try_cuda(mask), \
+        seq_lengths
     if sort:
         ret_tp = ret_tp + (list(perm_idx),)
     return ret_tp
 
+
 def final_text_enc(encoded_instructions, max_length, encoder):
-    seq, seq_mask, seq_lengths = batch_instructions_from_encoded(encoded_instructions, max_length, reverse=False)
-    ctx,h_t,c_t = encoder(seq, seq_lengths)
+    seq, seq_mask, seq_lengths = batch_instructions_from_encoded(
+        encoded_instructions, max_length, reverse=False)
+    ctx, h_t, c_t = encoder(seq, seq_lengths)
     return h_t, c_t
+
 
 def stretch_tensor(alphas, lens, target_len):
     ''' Given a batch of sequences of various lengths, stretch to a target_len
@@ -132,10 +144,12 @@ def stretch_tensor(alphas, lens, target_len):
     batch_size, _ = alphas.shape
     r = torch.zeros(batch_size, target_len)
     al = alphas.unsqueeze(1)
-    for idx,_len in enumerate(lens):
-        r[idx] = F.interpolate(al[idx:idx+1,:,:_len],size=(target_len),mode='linear',align_corners=False)
+    for idx, _len in enumerate(lens):
+        r[idx] = F.interpolate(
+            al[idx:idx+1, :, :_len], size=(target_len), mode='linear', align_corners=False)
         r[idx] /= r[idx].sum()
     return r
+
 
 class BaseAgent(object):
     ''' Base class for an R2R agent to generate and save trajectories. '''
@@ -145,7 +159,7 @@ class BaseAgent(object):
         self.results_path = results_path
         random.seed(1)
         self.results = {}
-        self.losses = [] # For learning agents
+        self.losses = []  # For learning agents
 
     def write_test_results(self):
         results = []
@@ -186,7 +200,7 @@ class BaseAgent(object):
         self.clean_results = {}
 
         # We rely on env showing the entire batch before repeating anything
-        #print 'Testing %s' % self.__class__.__name__
+        # print 'Testing %s' % self.__class__.__name__
         looped = False
         rollout_scores = []
         beam_10_scores = []
@@ -206,18 +220,21 @@ class BaseAgent(object):
         #     print("avg beam 10 score: ", np.mean(beam_10_scores))
         return self.results
 
+
 def path_element_from_observation(ob):
     return (ob['viewpoint'], ob['heading'], ob['elevation'])
+
 
 def realistic_jumping(graph, start_step, dest_obs):
     if start_step == path_element_from_observation(dest_obs):
         return []
     s = start_step[0]
     t = dest_obs['viewpoint']
-    path = nx.shortest_path(graph,s,t)
-    traj = [(vp,0,0) for vp in path[:-1]]
+    path = nx.shortest_path(graph, s, t)
+    traj = [(vp, 0, 0) for vp in path[:-1]]
     traj.append(path_element_from_observation(dest_obs))
     return traj
+
 
 class StopAgent(BaseAgent):
     ''' An agent that doesn't move! '''
@@ -227,7 +244,7 @@ class StopAgent(BaseAgent):
         obs = self.env.observe(world_states)
         traj = [{
             'instr_id': ob['instr_id'],
-            'trajectory': [path_element_from_observation(ob) ]
+            'trajectory': [path_element_from_observation(ob)]
         } for ob in obs]
         return traj
 
@@ -257,7 +274,7 @@ class RandomAgent(BaseAgent):
                     a = np.random.randint(len(ob['adj_loc_list']) - 1)
                     actions.append(a)  # choose a random adjacent loc
                     self.steps[i] += 1
-                    if a ==0:
+                    if a == 0:
                         ended[i] = True
                 else:
                     assert len(ob['adj_loc_list']) > 1
@@ -265,10 +282,12 @@ class RandomAgent(BaseAgent):
                     self.steps[i] += 1
             world_states = self.env.step(world_states, actions, obs)
             obs = self.env.observe(world_states)
-            for i,ob in enumerate(obs):
+            for i, ob in enumerate(obs):
                 if not ended[i]:
-                    traj[i]['trajectory'].append(path_element_from_observation(ob))
+                    traj[i]['trajectory'].append(
+                        path_element_from_observation(ob))
         return traj
+
 
 class ShortestAgent(BaseAgent):
     ''' An agent that always takes the shortest path to goal. '''
@@ -276,7 +295,8 @@ class ShortestAgent(BaseAgent):
     def rollout(self):
         world_states = self.env.reset()
         #obs = self.env.observe(world_states)
-        all_obs, all_actions = self.env.shortest_paths_to_goals(world_states, 20)
+        all_obs, all_actions = self.env.shortest_paths_to_goals(
+            world_states, 20)
         return [
             {
                 'instr_id': obs[0]['instr_id'],
@@ -286,53 +306,57 @@ class ShortestAgent(BaseAgent):
             for obs in all_obs
         ]
 
+
 class AgentMemory():
-    def __init__(self, ppo_mini_epoch=5,ppo_batch_size=None, ppo_memory_size=460):
-        #Trajectories is a disctionary that sotres the 6 atrabuites (action,obs,..)
-        #of an step untill the episode is completed. Keys are batch episode. 
-        self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
+    def __init__(self, ppo_mini_epoch=5, ppo_batch_size=None, ppo_memory_size=460):
+        # Trajectories is a disctionary that sotres the 6 atrabuites (action,obs,..)
+        # of an step untill the episode is completed. Keys are batch episode.
+        self.trajectories = {str(i): ([], [], [], [], [], [])
+                             for i in range(0, 64)}
         #self.trajectories = [ [[],[],[],[],[],[]] for i in range(0,64)]
-        
+
         self.obs = []
         self.actions = []
         self.log_probs = []
         self.values = []
-        self.rewards = [] 
+        self.rewards = []
         self.dones = []
         self.advantages = []
-        
+
         self.memory_size = ppo_memory_size
         self.batch_size = ppo_batch_size
         self.mini_epoch = ppo_mini_epoch
-    
-    def _caculate_reward(self,action,target_action, target_distance=0):
+
+    def _caculate_reward(self, action, target_action, target_distance=0):
         if action == target_action:
-            distance_reward = 1/(target_distance+.1) *20
+            distance_reward = 1/(target_distance+.1) * 20
             reward = 5 + distance_reward
             #print("Reward:", reward)
             return reward
         else:
-            distance_reward = 1/(target_distance+.1) *20
+            distance_reward = 1/(target_distance+.1) * 20
             reward = -7 + distance_reward
             #print("Reward:", reward)
             return reward
 
     def store_history(self, obs, actions, probs, vals, target_actions, target_distances):
-        for i in range(0,len(actions)):
+        for i in range(0, len(actions)):
 
             if target_actions[i] == -1:
-                #This episode alredy finished. no need to store s,a. 
+                # This episode alredy finished. no need to store s,a.
                 continue
             elif actions[i] == 0:
                 done = True
             else:
                 done = False
-            
-            reward = self._caculate_reward(actions[i], target_actions[i],target_distances[i])
 
-            ob = (obs[0][i],obs[1][i],obs[2][i],obs[3][i],obs[4][i],obs[5][i], obs[6][i])
-            i_str = str(i) 
-            self.trajectories[i_str][0].append(ob) 
+            reward = self._caculate_reward(
+                actions[i], target_actions[i], target_distances[i])
+
+            ob = (obs[0][i], obs[1][i], obs[2][i], obs[3]
+                  [i], obs[4][i], obs[5][i], obs[6][i])
+            i_str = str(i)
+            self.trajectories[i_str][0].append(ob)
             self.trajectories[i_str][1].append(actions[i].item())
             self.trajectories[i_str][2].append(probs[i])
             self.trajectories[i_str][3].append(vals[i].item())
@@ -344,29 +368,35 @@ class AgentMemory():
         self.actions = []
         self.log_probs = []
         self.values = []
-        self.rewards = [] 
+        self.rewards = []
         self.dones = []
         self.advantages = []
-        self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
+        self.trajectories = {str(i): ([], [], [], [], [], [])
+                             for i in range(0, 64)}
 
+    def calc_advantages(self, gamma=0.99, gae_lambda=.95):
 
-    def calc_advantages(self,gamma=0.99, gae_lambda=.95):
         for T in self.trajectories.keys():
+
             traj = self.trajectories[T]
+
             states_arr, action_arr, old_probs_arr, vals_arr,\
-            reward_arr, done_arr  = traj[0],\
-            traj[1], traj[2],traj[3],\
-            np.array(traj[4]), np.array(traj[5])
-             
+                reward_arr, done_arr = traj[0],\
+                traj[1], traj[2], traj[3],\
+                np.array(traj[4]), np.array(traj[5])
+
             if len(reward_arr) != 1:
+
                 for t in range(len(reward_arr)-1):
+
                     discount = 1
                     advt = 0
-                    for k in range(t,len(reward_arr)-1):
-                        advt += discount*(reward_arr[k]+gamma*vals_arr[k+1]*\
-                                (1-int(done_arr[k])) - vals_arr[k])
-                        discount *= gamma* gae_lambda
-                    
+
+                    for k in range(t, len(reward_arr)-1):
+
+                        advt += discount * (reward_arr[k] + gamma * vals_arr[k+1] * (1 - int(done_arr[k])) - vals_arr[k])  # nopep8
+                        discount *= gamma * gae_lambda  # nopep8
+
                     self.obs.append(states_arr[t])
                     self.actions.append(action_arr[t])
                     self.log_probs.append(old_probs_arr[t])
@@ -374,7 +404,7 @@ class AgentMemory():
                     self.rewards.append(reward_arr[t])
                     self.dones.append(done_arr[t])
                     self.advantages.append(advt)
-            
+
             else:
                 discount = 1
                 advt = discount * (reward_arr[0] - vals_arr[0])
@@ -385,13 +415,14 @@ class AgentMemory():
                 self.rewards.append(reward_arr[0])
                 self.dones.append(done_arr[0])
                 self.advantages.append(advt)
-        
-        self.trajectories = {str(i):([],[],[],[],[],[]) for i in range(0,64)}
 
-    def _sorting(self, start,end,pos):
-        #Sorting Using insertion sort
+        self.trajectories = {str(i): ([], [], [], [], [], [])
+                             for i in range(0, 64)}
+
+    def _sorting(self, start, end, pos):
+        # Sorting Using insertion sort
         for i in range(start+1, end):
-            
+
             obs_holder = self.obs[i]
             actions_holder = self.actions[i]
             log_p_holder = self.log_probs[i]
@@ -399,7 +430,7 @@ class AgentMemory():
             reward_holder = self.rewards[i]
             done_holder = self.dones[i]
             adv_holder = self.advantages[i]
-            
+
             key = len(self.obs[i][pos])
 
             j = i-1
@@ -421,10 +452,10 @@ class AgentMemory():
             self.dones[j+1] = done_holder
             self.advantages[j+1] = adv_holder
 
-    def _batch_interval(self,start,end,pos):
+    def _batch_interval(self, start, end, pos):
         val_split = []
         batch_interval = []
-        for i in range(start,end):
+        for i in range(start, end):
             val_len = len(self.obs[i][pos])
 
             if val_len not in val_split:
@@ -433,59 +464,58 @@ class AgentMemory():
         return batch_interval
 
     def generate_mixed_batch(self):
-        #some of states obs are of different sizes. We need to sort and group them 
-        #Pos = 1 for 'all_u_t'
-        #Pos = 5 for 'ctx' 
-        self._sorting(0,len(self.obs),1)
- 
-        batch_start_1  = self._batch_interval(0,len(self.obs),1)
-        
-        batch_start_5 =  []
-        for i in range(0,len(batch_start_1)):
+        # some of states obs are of different sizes. We need to sort and group them
+        # Pos = 1 for 'all_u_t'
+        # Pos = 5 for 'ctx'
+        self._sorting(0, len(self.obs), 1)
+
+        batch_start_1 = self._batch_interval(0, len(self.obs), 1)
+
+        batch_start_5 = []
+        for i in range(0, len(batch_start_1)):
             start = batch_start_1[i]
             if i+1 > len(batch_start_1)-1:
-                end = len(self.obs) 
+                end = len(self.obs)
             else:
-                end = batch_start_1[i+1] - 1 
-            self._sorting(start,end,5) 
-            
-            batch_start_5 = batch_start_5 + self._batch_interval(start,end,5)
+                end = batch_start_1[i+1] - 1
+            self._sorting(start, end, 5)
 
-        batch_start_6 =  []
-        for i in range(0,len(batch_start_5)):
+            batch_start_5 = batch_start_5 + self._batch_interval(start, end, 5)
+
+        batch_start_6 = []
+        for i in range(0, len(batch_start_5)):
             start = batch_start_5[i]
             if i+1 > len(batch_start_5)-1:
-                end = len(self.obs) 
+                end = len(self.obs)
             else:
-                end = batch_start_5[i+1] - 1 
-            self._sorting(start,end,6)
-            
-            batch_start_6 = batch_start_6 + self._batch_interval(start,end,6)
+                end = batch_start_5[i+1] - 1
+            self._sorting(start, end, 6)
 
+            batch_start_6 = batch_start_6 + self._batch_interval(start, end, 6)
 
-        return  self.obs,\
-                self.actions,\
-                self.log_probs,\
-                self.values,\
-                self.rewards,\
-                self.dones,\
-                self.advantages,\
-                batch_start_6
+        return self.obs,\
+            self.actions,\
+            self.log_probs,\
+            self.values,\
+            self.rewards,\
+            self.dones,\
+            self.advantages,\
+            batch_start_6
 
-    def learn(self, decoder, optimizers,losses_list, policy_clip=0.2): 
+    def learn(self, decoder, optimizers, losses_list, policy_clip=0.2):
         states_arr, action_arr, old_probs_arr, vals_arr,\
             reward_arr, done_arr, advantages_arr, batches = self.generate_mixed_batch()
-           
+
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-            
+
         for _ in range(self.mini_epoch):
-            for i in range(0,len(batches)):
+            for i in range(0, len(batches)):
                 start = batches[i]
-                if i+1 > len(batches) -1:
+                if i+1 > len(batches) - 1:
                     end = len(self.obs)
                 else:
-                    end = batches[i+1] -1 
-                
+                    end = batches[i+1] - 1
+
                 states = states_arr[start:end]
                 actions = action_arr[start:end]
                 old_probs = old_probs_arr[start:end]
@@ -493,19 +523,18 @@ class AgentMemory():
                 dones = done_arr[start:end]
                 advantages = advantages_arr[start:end]
                 rewards = reward_arr[start:end]
-                
+
                 #temp = list(zip(states,actions,old_probs,values,dones,advantages))
-                #random.shuffle(temp)
+                # random.shuffle(temp)
                 #states, actions, old_probs, values,dones, advantages = zip(*temp)
-                
-                #start learning
+
+                # start learning
                 old_probs = torch.tensor(old_probs)
                 actions = torch.tensor(actions)
                 advantages = torch.tensor(advantages).float().to(device)
                 #advantages = (adv - torch.mean(adv)) / (torch.std(adv) + 1e-8)
 
-
-                u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [],[],[],[],[],[],[]
+                u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [], [], [], [], [], [], []
                 for item in states:
                     u_t_prev.append(item[0])
                     all_u_t.append(item[1])
@@ -514,40 +543,42 @@ class AgentMemory():
                     c_t.append(item[4])
                     ctx.append(item[5])
                     seq_mask.append(item[6])
-                
+
                 u_t_prev = torch.stack(u_t_prev)
                 all_u_t = torch.stack(all_u_t)
                 f_t_list = torch.stack(f_t_list)
                 h_t = torch.stack(h_t)
-                c_t = torch.stack(c_t) 
+                c_t = torch.stack(c_t)
                 ctx = torch.stack(ctx)
-                seq_mask = torch.stack(seq_mask) 
-                
-                h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = decoder(u_t_prev,\
-                     all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
-                
-                #Actor Loss
+                seq_mask = torch.stack(seq_mask)
+
+                h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = decoder(u_t_prev,
+                                                                                       all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
+
+                # Actor Loss
                 dist = D.Categorical(logits=logit)
-                
+
                 actions = actions.cuda()
-                
+
                 new_probs = dist.log_prob(actions)
-                
+
                 old_probs = old_probs.cuda()
                 ratio = new_probs - old_probs
                 prob_ratio = (ratio).exp()
- 
+
                 weighted_probs = advantages * prob_ratio
-                weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip,1+policy_clip)\
-                        * advantages
-                ppo_loss = -torch.min(weighted_probs,weignte_clipped_probs).mean()
-                
-                #Critic loss
-                returns = advantages + values 
-                critic_loss = ( returns - value) **2
-                critic_loss =  critic_loss.mean()
-                
-                loss = ppo_loss + 0.5*critic_loss # - (0.01* dist.entropy().mean())
+                weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip, 1+policy_clip)\
+                    * advantages
+                ppo_loss = -torch.min(weighted_probs,
+                                      weignte_clipped_probs).mean()
+
+                # Critic loss
+                returns = advantages + values
+                critic_loss = (returns - value) ** 2
+                critic_loss = critic_loss.mean()
+
+                # - (0.01* dist.entropy().mean())
+                loss = ppo_loss + 0.5*critic_loss
                 '''
                 try:
                     print("loss:", loss)
@@ -560,9 +591,9 @@ class AgentMemory():
                     opt.zero_grad()
                 loss.backward()
                 for opt in optimizers:
-                    opt.step() 
+                    opt.step()
                 losses_list.append(loss.item())
-                del loss, critic_loss, ppo_loss, dist, h_t,c_t,t_ground,v_ground,logit,alpha_t,alpha_v,value 
+                del loss, critic_loss, ppo_loss, dist, h_t, c_t, t_ground, v_ground, logit, alpha_t, alpha_v, value
 
         states_arr.clear()
         action_arr.clear()
@@ -572,13 +603,10 @@ class AgentMemory():
         done_arr.clear()
         advantages_arr.clear()
         batches.clear()
-        del states_arr,action_arr, old_probs_arr, vals_arr, reward_arr, done_arr, advantages_arr, batches
+        del states_arr, action_arr, old_probs_arr, vals_arr, reward_arr, done_arr, advantages_arr, batches
         self.clear_history()
         del self.obs, self.actions, self.log_probs
         self.clear_history()
-         
-       
-
 
 
 class Seq2SeqAgent(BaseAgent):
@@ -613,28 +641,29 @@ class Seq2SeqAgent(BaseAgent):
 
     def _feature_variables(self, obs, beamed=False):
         ''' Extract precomputed features into variable. '''
-        feature_lists = list(zip(*[ob['feature'] for ob in (flatten(obs) if beamed else obs)]))
+        feature_lists = list(zip(*[ob['feature']
+                             for ob in (flatten(obs) if beamed else obs)]))
         assert len(feature_lists) == len(self.env.image_features_list)
         batched = []
         for featurizer, feature_list in zip(self.env.image_features_list, feature_lists):
             batched.append(featurizer.batch_features(feature_list))
         return batched
 
-    def getObjLanFeat(self,obs):
+    def getObjLanFeat(self, obs):
         objFeats = []
         for i, ob in enumerate(obs):
             lanInput = np.zeros((len(ob['adj_loc_list']), 25))
             for j, candi_view in enumerate(ob['adj_loc_list']):
                 # print('i=%d,j=%d'%(i,j))
-                if j==0:
+                if j == 0:
                     if self.useStopFeat:
                         featKey = ob['instr_id'] + '_%s_%s_%02d' % (ob['scan'], ob['viewpoint'],
-                                                                         ob['viewIndex'])
+                                                                    ob['viewIndex'])
                     else:
                         continue
                 else:
                     featKey = ob['instr_id'] + '_%s_%s_%02d' % (ob['scan'], ob['viewpoint'],
-                                                                     candi_view['absViewIndex'])
+                                                                candi_view['absViewIndex'])
                 if featKey in self.ObjEachViewLanFeat:
                     lanInput[j, :] = self.ObjEachViewLanFeat[featKey]
                 else:
@@ -645,12 +674,12 @@ class Seq2SeqAgent(BaseAgent):
                             lanInput[j, :] = data
                             self.ObjEachViewLanFeat[featKey] = data
                     else:
-                        if j==0:
+                        if j == 0:
                             _, data = self.pointer.groundingForView(ob['scan'], ob['viewpoint'],
-                                                       ob['Label'], ob['viewIndex'], 'one')
+                                                                    ob['Label'], ob['viewIndex'], 'one')
                         else:
                             _, data = self.pointer.groundingForView(ob['scan'], ob['viewpoint'],
-                                                       ob['Label'], candi_view['absViewIndex'],'one')
+                                                                    ob['Label'], candi_view['absViewIndex'], 'one')
                         if not data is None:
                             self.ObjEachViewLanFeat[featKey] = data
                             lanInput[j, :] = data
@@ -659,33 +688,38 @@ class Seq2SeqAgent(BaseAgent):
             # go through lstm
             if self.useStopFeat:
                 seq, seq_mask, seq_lengths, perm_indices = \
-                    batch_instructions_from_encoded(lanInput, 25, reverse=False, sort=True)
+                    batch_instructions_from_encoded(
+                        lanInput, 25, reverse=False, sort=True)
 
-                addSelf = self.objLabelEncoder(seq, seq_lengths)  # check requires_grad
+                addSelf = self.objLabelEncoder(
+                    seq, seq_lengths)  # check requires_grad
             else:
                 seq, seq_mask, seq_lengths, perm_indices = \
-                    batch_instructions_from_encoded(lanInput[1:,:], 25, reverse=False, sort=True)
+                    batch_instructions_from_encoded(
+                        lanInput[1:, :], 25, reverse=False, sort=True)
 
-                objctx = self.objLabelEncoder(seq, seq_lengths)  # check requires_grad
-                addSelf = torch.cat((torch.zeros(1,512).cuda(), objctx), 0)
+                objctx = self.objLabelEncoder(
+                    seq, seq_lengths)  # check requires_grad
+                addSelf = torch.cat((torch.zeros(1, 512).cuda(), objctx), 0)
             objFeats.append(addSelf)
         return objFeats
 
-    def getObjVisFeat(self,obs):
+    def getObjVisFeat(self, obs):
         objFeats = []
         visDim = self.objVisFeatDim
         for i, ob in enumerate(obs):
-            temp = np.zeros((len(ob['adj_loc_list']),visDim),dtype=np.float32)
+            temp = np.zeros(
+                (len(ob['adj_loc_list']), visDim), dtype=np.float32)
             for j, candi_view in enumerate(ob['adj_loc_list']):
-                if j==0:
+                if j == 0:
                     if self.useStopFeat:
                         featKey = ob['instr_id'] + '_%s_%s_%02d' % (ob['scan'], ob['viewpoint'],
-                                                                         ob['viewIndex'])
+                                                                    ob['viewIndex'])
                     else:
                         continue
                 else:
                     featKey = ob['instr_id'] + '_%s_%s_%02d' % (ob['scan'], ob['viewpoint'],
-                                                                     candi_view['absViewIndex'])
+                                                                candi_view['absViewIndex'])
 
                 if featKey in self.ObjEachViewVisFeat:
                     temp[j, :] = self.ObjEachViewVisFeat[featKey]
@@ -697,15 +731,17 @@ class Seq2SeqAgent(BaseAgent):
                             self.ObjEachViewVisFeat[featKey] = data
                     except:
                         if os.path.exists(self.ObjEachViewVisFeatPath + featKey + '.json'):
-                            print('regenerate '+ self.ObjEachViewVisFeatPath + featKey + '.json')
-                            os.remove(self.ObjEachViewVisFeatPath + featKey + '.json')
+                            print(
+                                'regenerate ' + self.ObjEachViewVisFeatPath + featKey + '.json')
+                            os.remove(self.ObjEachViewVisFeatPath +
+                                      featKey + '.json')
 
-                        if j==0:
+                        if j == 0:
                             data, _ = self.pointer.groundingForView(ob['scan'], ob['viewpoint'],
-                                                  ob['Label'], ob['viewIndex'], 'one')
+                                                                    ob['Label'], ob['viewIndex'], 'one')
                         else:
                             data, _ = self.pointer.groundingForView(ob['scan'], ob['viewpoint'],
-                                                  ob['Label'], candi_view['absViewIndex'],'one')
+                                                                    ob['Label'], candi_view['absViewIndex'], 'one')
 
                         if not data is None:
                             self.ObjEachViewVisFeat[featKey] = data
@@ -729,7 +765,8 @@ class Seq2SeqAgent(BaseAgent):
 
             objFeats = []
             for i in range(len(obs)):
-                temp = torch.cat((visFeats[i],lanFeats[i]),1) # check cat cols
+                # check cat cols
+                temp = torch.cat((visFeats[i], lanFeats[i]), 1)
                 objFeats.append(temp)
 
         return objFeats
@@ -755,7 +792,7 @@ class Seq2SeqAgent(BaseAgent):
             elif self.useObjLabelOrVis == 'both':
                 objDim = self.objVisFeatDim + self.objLanFeatDim
 
-        action_embeddings = torch.zeros((len(obs), max_num_a, action_embedding_dim+objDim),\
+        action_embeddings = torch.zeros((len(obs), max_num_a, action_embedding_dim+objDim),
                                         dtype=torch.float32).cuda()
 
         if not self.pointer is None:
@@ -764,14 +801,15 @@ class Seq2SeqAgent(BaseAgent):
                 num_a = len(adj_loc_list)
                 is_valid[i, 0:num_a] = 1.
                 action_embeddings[i, :num_a, :] = torch.cat((torch.from_numpy(ob['action_embedding']).cuda(),
-                                                              objFeats[i]),dim=1)
+                                                             objFeats[i]), dim=1)
         else:
             for i, ob in enumerate(obs):
                 adj_loc_list = ob['adj_loc_list']
                 num_a = len(adj_loc_list)
                 is_valid[i, 0:num_a] = 1.
 
-                action_embeddings[i, :num_a, :] = torch.from_numpy(ob['action_embedding']).cuda() #
+                action_embeddings[i, :num_a, :] = torch.from_numpy(
+                    ob['action_embedding']).cuda()
 
         return (
             action_embeddings,
@@ -781,7 +819,7 @@ class Seq2SeqAgent(BaseAgent):
     def _teacher_action(self, obs, ended):
         ''' Extract teacher actions into variable. '''
         a = torch.LongTensor(len(obs))
-        for i,ob in enumerate(obs):
+        for i, ob in enumerate(obs):
             # Supervised teacher only moves one axis at a time
             a[i] = ob['teacher'] if not ended[i] else -1
         return try_cuda(Variable(a, requires_grad=False))
@@ -789,36 +827,38 @@ class Seq2SeqAgent(BaseAgent):
     def _progress_target(self, obs, ended, monitor_score):
         t = [None] * len(obs)
         num_elem = 0
-        for i,ob in enumerate(obs):
+        for i, ob in enumerate(obs):
             num_elem += int(not ended[i])
             t[i] = ob['progress'][0] if not ended[i] else monitor_score[i].item()
             #t[i] = ob['progress'][0] if not ended[i] else 1.0
         return try_cuda(torch.tensor(t, requires_grad=False)), num_elem
-    
+
     def _distance_target(self, obs, ended):
         t = [None] * len(obs)
-        for i,ob in enumerate(obs):
-            t[i] = ob['distance'][0] if not ended[i] else -1 
+        for i, ob in enumerate(obs):
+            t[i] = ob['distance'][0] if not ended[i] else -1
         return try_cuda(torch.tensor(t, requires_grad=False))
 
     def _progress_soft_align(self, alpha_t, seq_lengths):
-        if not hasattr(self,'dummy'):
+        if not hasattr(self, 'dummy'):
             self.dummy = torch.arange(80).float().cuda()
-        score = torch.matmul(alpha_t,self.dummy[:alpha_t.size()[-1]])
+        score = torch.matmul(alpha_t, self.dummy[:alpha_t.size()[-1]])
         score /= torch.tensor(seq_lengths).float().cuda()
         return score
 
     def _deviation_target(self, obs, ended, computed_score):
-        t = [ob['deviation'] if not ended[i] else computed_score[i].item() for i,ob in enumerate(obs)]
+        t = [ob['deviation'] if not ended[i] else computed_score[i].item()
+             for i, ob in enumerate(obs)]
         return try_cuda(torch.tensor(t, requires_grad=False).float())
 
     def _proc_batch(self, obs, beamed=False):
-        encoded_instructions = [ob['instr_encoding'] for ob in (flatten(obs) if beamed else obs)]
+        encoded_instructions = [ob['instr_encoding']
+                                for ob in (flatten(obs) if beamed else obs)]
         tok = self.env.tokenizer if self.attn_only_verb else None
         return batch_instructions_from_encoded(encoded_instructions, self.max_instruction_length, reverse=self.reverse_instruction, tok=tok)
 
     def rollout(self):
-        if hasattr(self,'search'):
+        if hasattr(self, 'search'):
             self.records = defaultdict(list)
             return self._rollout_with_search()
         if self.beam_size == 1:
@@ -841,7 +881,7 @@ class Seq2SeqAgent(BaseAgent):
                 reverse=self.reverse_instruction, sort=True)
         loss = 0
 
-        ctx,h_t,c_t = self.encoder(seq, seq_lengths)
+        ctx, h_t, c_t = self.encoder(seq, seq_lengths)
         u_t_prev = self.decoder.u_begin.expand(batch_size, -1)  # init action
         ended = np.array([False] * batch_size)
         sequence_scores = try_cuda(torch.zeros(batch_size))
@@ -871,12 +911,14 @@ class Seq2SeqAgent(BaseAgent):
 
             obs = next_obs
 
-            target = try_cuda(Variable(torch.LongTensor(next_target_list), requires_grad=False))
+            target = try_cuda(Variable(torch.LongTensor(
+                next_target_list), requires_grad=False))
 
-            f_t_list = self._feature_variables(obs) # Image features from obs
+            f_t_list = self._feature_variables(obs)  # Image features from obs
             all_u_t, is_valid, _ = self._action_variable(obs)
 
-            assert len(f_t_list) == 1, 'for now, only work with MeanPooled feature'
+            assert len(
+                f_t_list) == 1, 'for now, only work with MeanPooled feature'
             h_t, c_t, alpha, logit, alpha_v = self.decoder(
                 u_t_prev, all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
 
@@ -891,15 +933,19 @@ class Seq2SeqAgent(BaseAgent):
             # update the previous action
             u_t_prev = all_u_t[np.arange(batch_size), a_t, :].detach()
 
-            action_scores = -F.cross_entropy(logit, target, ignore_index=-1, reduction='none').data
+            action_scores = - \
+                F.cross_entropy(logit, target, ignore_index=-
+                                1, reduction='none').data
             sequence_scores += action_scores
 
             # Save trajectory output
             for perm_index, src_index in enumerate(perm_indices):
                 ob = obs[perm_index]
                 if not ended[perm_index]:
-                    traj[src_index]['trajectory'].append(path_element_from_observation(ob))
-                    traj[src_index]['score'] = float(sequence_scores[perm_index])
+                    traj[src_index]['trajectory'].append(
+                        path_element_from_observation(ob))
+                    traj[src_index]['score'] = float(
+                        sequence_scores[perm_index])
                     traj[src_index]['scores'].append(action_scores[perm_index])
                     traj[src_index]['actions'].append(a_t.data[perm_index])
                     # traj[src_index]['observations'].append(ob)
@@ -937,7 +983,7 @@ class Seq2SeqAgent(BaseAgent):
 
         feedback = self.feedback
 
-        ctx,h_t,c_t = self.encoder(seq, seq_lengths)
+        ctx, h_t, c_t = self.encoder(seq, seq_lengths)
 
         # Record starting point
         traj = [{
@@ -954,7 +1000,8 @@ class Seq2SeqAgent(BaseAgent):
 
         # Initial action
         u_t_prev = self.decoder.u_begin.expand(batch_size, -1)  # init action
-        ended = np.array([False] * batch_size) # Indices match permuation of the model, not env
+        # Indices match permuation of the model, not env
+        ended = np.array([False] * batch_size)
 
         # Do a sequence rollout and calculate the loss
         env_action = [None] * batch_size
@@ -963,36 +1010,45 @@ class Seq2SeqAgent(BaseAgent):
         if self.scorer:
             traj_h, traj_c = self.scorer.init_traj(batch_size)
 
-
         for t in range(self.episode_len):
             #import GPUtil
-            #GPUtil.showUtilization()
-            f_t_list = self._feature_variables(obs) # Image features from obs
-            all_u_t, is_valid, _ = self._action_variable(obs) # add obj feature
+            # GPUtil.showUtilization()
+            f_t_list = self._feature_variables(obs)  # Image features from obs
+            all_u_t, is_valid, _ = self._action_variable(
+                obs)  # add obj feature
 
-            assert len(f_t_list) == 1, 'for now, only work with MeanPooled feature'
-            
+            assert len(
+                f_t_list) == 1, 'for now, only work with MeanPooled feature'
+
             # follower logit
             prev_h_t = h_t
             h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = self.decoder(
-                u_t_prev, all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask) 
-            
+                u_t_prev, all_u_t, f_t_list[0], h_t, c_t, ctx, seq_mask)
+
             if self.phase == 'train':
                 if self.soft_align:
-                    progress_score = self._progress_soft_align(alpha_t, seq_lengths)
-                    target_score, num_elem = self._progress_target(obs, ended, progress_score)
-                    self.pm_loss += pm_criterion(progress_score, tarssset_score)
+                    progress_score = self._progress_soft_align(
+                        alpha_t, seq_lengths)
+                    target_score, num_elem = self._progress_target(
+                        obs, ended, progress_score)
+                    self.pm_loss += pm_criterion(progress_score,
+                                                 tarssset_score)
                     if torch.isnan(self.pm_loss):
-                        import pdb;pdb.set_trace()
+                        import pdb
+                        pdb.set_trace()
                 if self.prog_monitor:
-                    monitor_score = self.prog_monitor(prev_h_t,c_t,v_ground,alpha_t)
-                    target_score, num_elem = self._progress_target(obs, ended, monitor_score)
+                    monitor_score = self.prog_monitor(
+                        prev_h_t, c_t, v_ground, alpha_t)
+                    target_score, num_elem = self._progress_target(
+                        obs, ended, monitor_score)
                     self.pm_loss += pm_criterion(monitor_score, target_score)
 
                 if self.dev_monitor:
                     dv_criterion = nn.MSELoss()
-                    dev_score = self.dev_monitor(last_dev,prev_h_t,h_t,c_t,v_ground,t_ground, alpha_v, alpha_t, last_logit)
-                    target_score = self._deviation_target(obs, ended, dev_score)
+                    dev_score = self.dev_monitor(
+                        last_dev, prev_h_t, h_t, c_t, v_ground, t_ground, alpha_v, alpha_t, last_logit)
+                    target_score = self._deviation_target(
+                        obs, ended, dev_score)
                     self.dv_loss += dv_criterion(dev_score, target_score)
                     last_dev = dev_score
 
@@ -1000,7 +1056,7 @@ class Seq2SeqAgent(BaseAgent):
             if self.scorer:
                 # encode traj
                 proposal_h, proposal_c = self.scorer.prepare_proposals(
-                        traj_h, traj_c, f_t_list[0], all_u_t)
+                    traj_h, traj_c, f_t_list[0], all_u_t)
 
                 # feed to scorer
                 scorer_logit = self.scorer.scorer(t_ground, proposal_h)
@@ -1011,13 +1067,13 @@ class Seq2SeqAgent(BaseAgent):
             # Mask outputs of invalid action
             _logit = logit.detach()
             _logit[is_valid == 0] = -float('inf')
-           
+
             # Supervised training
             target = self._teacher_action(obs, ended)
             #self.ce_loss += ce_criterion(logit, target)
             total_num_elem += np.size(ended) - np.count_nonzero(ended)
 
-            #if self.it_indx == 34:
+            # if self.it_indx == 34:
             #import pdb;pdb.set_trace()
 
             # Determine next model inputs
@@ -1028,12 +1084,12 @@ class Seq2SeqAgent(BaseAgent):
                 m = D.Categorical(logits=_logit)
                 a_t = m.sample()
             elif feedback == 'argmax':
-                _,a_t = _logit.max(1)        # student forcing - argmax
+                _, a_t = _logit.max(1)        # student forcing - argmax
                 a_t = a_t.detach()
             elif feedback == 'recover':
                 m = D.Categorical(logits=_logit)
                 a_t = m.sample()
-                for i,ob in enumerate(obs):
+                for i, ob in enumerate(obs):
                     if ob['deviation'] > 0:
                         a_t[i] = -1
             else:
@@ -1041,11 +1097,12 @@ class Seq2SeqAgent(BaseAgent):
                     m = D.Categorical(logits=_logit)
                     a_t = m.sample()
                 elif 'argmax' in feedback:
-                    _,a_t = _logit.max(1)
+                    _, a_t = _logit.max(1)
                 else:
-                    import pdb;pdb.set_trace()
+                    import pdb
+                    pdb.set_trace()
                 deviation = int(''.join([n for n in feedback if n.isdigit()]))
-                for i,ob in enumerate(obs):
+                for i, ob in enumerate(obs):
                     if ob['deviation'] >= deviation:
                         a_t[i] = target[i]
                 a_t = torch.clamp(a_t, min=0)
@@ -1054,9 +1111,9 @@ class Seq2SeqAgent(BaseAgent):
             for i in range(batch_size):
                 if a_t[i].item() >= len(obs[i]['adj_loc_list']):
                     while True:
-                        nm = D.Categorical(logits=_logit[i,:])
+                        nm = D.Categorical(logits=_logit[i, :])
                         a_t[i] = nm.sample()
-                        if a_t[i].item()<len(obs[i]['adj_loc_list']):
+                        if a_t[i].item() < len(obs[i]['adj_loc_list']):
                             break
 
             # update the previous action
@@ -1068,7 +1125,9 @@ class Seq2SeqAgent(BaseAgent):
                 traj_h = proposal_h[np.arange(batch_size), a_t, :]
                 traj_c = proposal_c[np.arange(batch_size), a_t, :]
 
-            action_scores = -F.cross_entropy(_logit, a_t, ignore_index=-1, reduce=False).data
+            action_scores = - \
+                F.cross_entropy(_logit, a_t, ignore_index=-
+                                1, reduce=False).data
             sequence_scores += action_scores
 
             # Make environment action
@@ -1076,29 +1135,31 @@ class Seq2SeqAgent(BaseAgent):
                 action_idx = a_t[i].item()
                 env_action[i] = action_idx
 
-              #Sanmi's Edits
-            #======  PPO ================================================
+              # Sanmi's Edits
+            # ======  PPO ================================================
             ppo_logit = logit
             ppo_logit[is_valid == 0] = -float('inf')
             dist = D.Categorical(logits=ppo_logit)
             probs = dist.log_prob(a_t)
 
             ppo_ht, ppo_ct = h_t, c_t
-            ppo_obs = [u_t_prev.detach(), all_u_t.detach(), f_t_list[0].detach(), ppo_ht.detach(),\
-                    ppo_ct.detach(), ctx.detach(), seq_mask.detach()]
+            ppo_obs = [u_t_prev.detach(), all_u_t.detach(), f_t_list[0].detach(), ppo_ht.detach(),
+                       ppo_ct.detach(), ctx.detach(), seq_mask.detach()]
             target_distance = self._distance_target(obs, ended)
-            self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance)
+            self.ppo_memory.store_history(
+                ppo_obs, a_t, probs, value, target, target_distance)
             #print("\nDone -------- Storing PPO Memory ----------")
-            #========================================  
+            # ========================================
             # update
             world_states = self.env.step(world_states, env_action, obs)
             obs = self.env.observe(world_states)
             # print("t: %s\tstate: %s\taction: %s\tscore: %s" % (t, world_states[0], a_t.item(), sequence_scores[0]))
 
             # Save trajectory output
-            for i,ob in enumerate(obs):
+            for i, ob in enumerate(obs):
                 if not ended[i]:
-                    traj[i]['trajectory'].append(path_element_from_observation(ob))
+                    traj[i]['trajectory'].append(
+                        path_element_from_observation(ob))
                     traj[i]['score'] = sequence_scores[i]
                     traj[i]['scores'].append(action_scores[i])
                     traj[i]['actions'].append(a_t.data[i])
@@ -1124,15 +1185,15 @@ class Seq2SeqAgent(BaseAgent):
             if self.dev_monitor:
                 self.loss += 0.1 * self.dv_loss
                 self.dv_losses.append(self.dv_loss.item())
-            #Sanmi Edit -- 2 lines commented. 
-            #self.losses.append(self.loss.item())
-            #self.ce_losses.append(self.ce_loss.item()) 
+            # Sanmi Edit -- 2 lines commented.
+            # self.losses.append(self.loss.item())
+            # self.ce_losses.append(self.ce_loss.item())
         return traj
 
     def _search_collect(self, batch_queue, wss, current_idx, ended):
         cand_wss = []
         cand_acs = []
-        for idx,_q in enumerate(batch_queue):
+        for idx, _q in enumerate(batch_queue):
             _wss = [wss[idx]]
             _acs = [0]
             _step = current_idx[idx]
@@ -1146,9 +1207,10 @@ class Seq2SeqAgent(BaseAgent):
 
     def _wss_to_obs(self, cand_wss, instr_ids):
         cand_obs = []
-        for _wss,_instr_id in zip(cand_wss, instr_ids):
+        for _wss, _instr_id in zip(cand_wss, instr_ids):
             ac_len = len(_wss)
-            cand_obs.append(self.env.observe(_wss, instr_id=_instr_id))# how to observe when there are many ws
+            # how to observe when there are many ws
+            cand_obs.append(self.env.observe(_wss, instr_id=_instr_id))
         return cand_obs
 
     def _rollout_with_search(self):
@@ -1159,13 +1221,15 @@ class Seq2SeqAgent(BaseAgent):
             bt_criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
         world_states = self.env.reset(sort=True)
-        obs = self.env.observe(world_states)# get panoramic feature and adjacent vps and corresponding action
+        # get panoramic feature and adjacent vps and corresponding action
+        obs = self.env.observe(world_states)
         batch_size = len(obs)
-        
+
         if not obs or len(obs) == 0:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
         seq, seq_mask, seq_lengths = self._proc_batch(obs)
-        ctx,h_t,c_t = self.encoder(seq, seq_lengths)
+        ctx, h_t, c_t = self.encoder(seq, seq_lengths)
 
         traj = [{
             'instr_id': ob['instr_id'],
@@ -1182,7 +1246,8 @@ class Seq2SeqAgent(BaseAgent):
         ending_queue = [PriorityQueue() for _ in range(batch_size)]
 
         visit_graphs = [nx.Graph() for _ in range(batch_size)]
-        for ob, g in zip(obs, visit_graphs): g.add_node(ob['viewpoint'])
+        for ob, g in zip(obs, visit_graphs):
+            g.add_node(ob['viewpoint'])
 
         ended = np.array([False] * batch_size)
 
@@ -1196,45 +1261,49 @@ class Seq2SeqAgent(BaseAgent):
                     action=0,
                     action_embedding=self.decoder.u_begin.view(-1).detach(),
                     action_count=0,
-                    h_t=h_t[i].detach(),c_t=c_t[i].detach(),
+                    h_t=h_t[i].detach(), c_t=c_t[i].detach(),
                     father=-1),
                 0)
 
         for t in range(self.episode_len):
 
             current_idx, priority, current_batch = \
-                    zip(*[_q.pop() for _q in batch_queue])
-            (last_logit,last_logp,last_world_states,last_obs,acs,acs_embedding,
-                    ac_counts,prev_h_t,prev_c_t,prev_father) = zip(*current_batch)
+                zip(*[_q.pop() for _q in batch_queue])
+            (last_logit, last_logp, last_world_states, last_obs, acs, acs_embedding,
+             ac_counts, prev_h_t, prev_c_t, prev_father) = zip(*current_batch)
 
             if t > 0:
-                for i,ob in enumerate(last_obs):
+                for i, ob in enumerate(last_obs):
                     if not ended[i]:
                         last_vp = traj[i]['trajectory'][-1]
                         traj[i]['trajectory'] += realistic_jumping(
-                            visit_graphs[i], last_vp, ob)#visited vp will not be added to traj
+                            visit_graphs[i], last_vp, ob)  # visited vp will not be added to traj
 
-                world_states = self.env.step(last_world_states,acs,last_obs)#make action to new vp
-                obs = self.env.observe(world_states)#the 1st action in ob's adj_list is stop
+                world_states = self.env.step(
+                    last_world_states, acs, last_obs)  # make action to new vp
+                # the 1st action in ob's adj_list is stop
+                obs = self.env.observe(world_states)
                 for i in range(batch_size):
                     if (not ended[i] and
-                        not visit_graphs[i].has_edge(last_obs[i]['viewpoint'], obs[i]['viewpoint'])):
-                        traj[i]['trajectory'].append(path_element_from_observation(obs[i]))
+                            not visit_graphs[i].has_edge(last_obs[i]['viewpoint'], obs[i]['viewpoint'])):
+                        traj[i]['trajectory'].append(
+                            path_element_from_observation(obs[i]))
                         visit_graphs[i].add_edge(last_obs[i]['viewpoint'],
-                                             obs[i]['viewpoint'])
+                                                 obs[i]['viewpoint'])
                 for idx, ac in enumerate(acs):
                     if ac == 0:
                         ended[idx] = True
                         batch_queue[idx].lock()
 
-            if ended.all(): break
+            if ended.all():
+                break
 
             u_t_prev = torch.stack(acs_embedding, dim=0)
-            prev_h_t = torch.stack(prev_h_t,dim=0)
-            prev_c_t = torch.stack(prev_c_t,dim=0)
+            prev_h_t = torch.stack(prev_h_t, dim=0)
+            prev_c_t = torch.stack(prev_c_t, dim=0)
 
             f_t_list = self._feature_variables(obs)
-            all_u_t, is_valid, _ = self._action_variable(obs) # t=0, how
+            all_u_t, is_valid, _ = self._action_variable(obs)  # t=0, how
 
             # 1. local scorer
             h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v, value = self.decoder(
@@ -1243,9 +1312,11 @@ class Seq2SeqAgent(BaseAgent):
             # 2. prog monitor
             progress_score = [0] * batch_size
             if self.soft_align:
-                progress_score = self._progress_soft_align(alpha_t, seq_lengths).tolist()
+                progress_score = self._progress_soft_align(
+                    alpha_t, seq_lengths).tolist()
             if self.prog_monitor:
-                progress_score = self.prog_monitor(prev_h_t,c_t,v_ground,alpha_t).tolist()
+                progress_score = self.prog_monitor(
+                    prev_h_t, c_t, v_ground, alpha_t).tolist()
 
             # Mask outputs of invalid actions
             _logit = logit.detach()
@@ -1256,13 +1327,14 @@ class Seq2SeqAgent(BaseAgent):
             ac_lens = np.argmax(is_valid_cpu == 0, axis=1).detach()
             ac_lens[ac_lens == 0] = is_valid_cpu.shape[1]
 
-            h_t_data, c_t_data = h_t.detach(),c_t.detach()
+            h_t_data, c_t_data = h_t.detach(), c_t.detach()
             u_t_data = all_u_t.detach()
             log_prob = F.log_softmax(_logit, dim=1).detach()
 
             # 4. prepare ending evaluation
-            cand_instr= [_traj['instr_encoding'] for _traj in traj]
-            cand_wss, cand_acs = self._search_collect(batch_queue, world_states, current_idx, ended)
+            cand_instr = [_traj['instr_encoding'] for _traj in traj]
+            cand_wss, cand_acs = self._search_collect(
+                batch_queue, world_states, current_idx, ended)
             instr_ids = [_traj['instr_id'] for _traj in traj]
             cand_obs = self._wss_to_obs(cand_wss, instr_ids)
 
@@ -1270,7 +1342,7 @@ class Seq2SeqAgent(BaseAgent):
             if self.speaker is not None:
                 speaker_scored_cand, _ = \
                     self.speaker._score_obs_actions_and_instructions(
-                        cand_obs,cand_acs,cand_instr,feedback='teacher')
+                        cand_obs, cand_acs, cand_instr, feedback='teacher')
                 speaker_scores = [_s['score'] for _s in speaker_scored_cand]
 
             goal_scores = [0] * batch_size
@@ -1285,14 +1357,18 @@ class Seq2SeqAgent(BaseAgent):
                 stop_button = self.gb(text_tensor, text_len, f_t_list[0])
 
             for idx in range(batch_size):
-                if ended[idx]: continue
+                if ended[idx]:
+                    continue
 
                 _len = ac_lens[idx]
-                new_logit = last_logit[idx].fork(_logit[idx][:_len].cpu().tolist())
-                new_logp = last_logp[idx].fork(log_prob[idx][:_len].cpu().tolist())
+                new_logit = last_logit[idx].fork(
+                    _logit[idx][:_len].cpu().tolist())
+                new_logp = last_logp[idx].fork(
+                    log_prob[idx][:_len].cpu().tolist())
 
                 # entropy
-                entropy = torch.sum(-log_prob[idx][:_len] * torch.exp(log_prob[idx][:_len]))
+                entropy = torch.sum(-log_prob[idx][:_len]
+                                    * torch.exp(log_prob[idx][:_len]))
 
                 # record
                 if self.env.notTest:
@@ -1308,7 +1384,7 @@ class Seq2SeqAgent(BaseAgent):
                 # selectively expand nodes
                 K = self.K
                 select_k = _len if _len < K else K
-                top_ac = list(torch.topk(_logit[idx][:_len],select_k)[1])
+                top_ac = list(torch.topk(_logit[idx][:_len], select_k)[1])
                 if self.inject_stop and 0 not in top_ac:
                     top_ac.append(0)
 
@@ -1336,14 +1412,14 @@ class Seq2SeqAgent(BaseAgent):
                             # Don't stop unless the stop button says so
                             ending_heur = _new_heur[ac]
                             new_ending = CandidateState(
-                                    flogit=new_logit[ac],
-                                    flogp=new_logp[ac],
-                                    world_states=cand_wss[idx],
-                                    actions=cand_acs[idx],
-                                    pm=progress_score[idx],
-                                    speaker=speaker_scores[idx],
-                                    scorer=_logit[idx][ac],
-                                    )
+                                flogit=new_logit[ac],
+                                flogp=new_logp[ac],
+                                world_states=cand_wss[idx],
+                                actions=cand_acs[idx],
+                                pm=progress_score[idx],
+                                speaker=speaker_scores[idx],
+                                scorer=_logit[idx][ac],
+                            )
 
                             ending_queue[idx].push(new_ending, ending_heur)
 
@@ -1355,9 +1431,9 @@ class Seq2SeqAgent(BaseAgent):
                             world_state=world_states[idx],
                             observation=obs[idx],
                             action=ac,
-                            action_embedding=u_t_data[idx,ac],
+                            action_embedding=u_t_data[idx, ac],
                             action_count=ac_counts[idx]+1,
-                            h_t=h_t_data[idx],c_t=c_t_data[idx],
+                            h_t=h_t_data[idx], c_t=c_t_data[idx],
                             father=current_idx[idx])
                         batch_queue[idx].push(new_node, _new_heur[ac])
 
@@ -1372,7 +1448,8 @@ class Seq2SeqAgent(BaseAgent):
                 if instr_id not in self.cache_candidates:
                     cand = []
                     for item in ending_queue[idx].queue:
-                        cand.append((instr_id, item.world_states, item.actions, item.flogit.sum, item.flogit.mean, item.flogp.sum, item.flogp.mean, item.pm, item.speaker, item.scorer))
+                        cand.append((instr_id, item.world_states, item.actions, item.flogit.sum, item.flogit.mean,
+                                    item.flogp.sum, item.flogp.mean, item.pm, item.speaker, item.scorer))
                     self.cache_candidates[instr_id] = cand
 
         # cache the search progress
@@ -1382,19 +1459,20 @@ class Seq2SeqAgent(BaseAgent):
                 if instr_id not in self.cache_search:
                     cand = []
                     for item in batch_queue[idx].queue:
-                        cand.append((item.world_state, item.action, item.father, item.flogit.sum, item.flogp.sum))
+                        cand.append((item.world_state, item.action,
+                                    item.father, item.flogit.sum, item.flogp.sum))
                     self.cache_search[instr_id] = cand
 
         # actually move the cursor
         for idx in range(batch_size):
             instr_id = traj[idx]['instr_id']
             if ending_queue[idx].size() == 0:
-                #print("Warning: some instr does not have ending, ",
+                # print("Warning: some instr does not have ending, ",
                 #        "this can be a desired behavior though")
                 self.clean_results[instr_id] = {
-                        'instr_id': traj[idx]['instr_id'],
-                        'trajectory': traj[idx]['trajectory'],
-                        }
+                    'instr_id': traj[idx]['instr_id'],
+                    'trajectory': traj[idx]['trajectory'],
+                }
                 continue
 
             last_vp = traj[idx]['trajectory'][-1]
@@ -1405,7 +1483,8 @@ class Seq2SeqAgent(BaseAgent):
                 while num_candidates > 0 and ending_queue[idx].size() > 0:
                     _idx, _pri, item = ending_queue[idx].pop()
                     inputs_idx.append(_idx)
-                    inputs.append([len(item.world_states), item.flogit.sum, item.flogit.mean, item.flogp.sum, item.flogp.mean, item.pm, item.speaker] * 4)
+                    inputs.append([len(item.world_states), item.flogit.sum, item.flogit.mean,
+                                  item.flogp.sum, item.flogp.mean, item.pm, item.speaker] * 4)
                     num_candidates -= 1
                 inputs = try_cuda(torch.Tensor(inputs))
                 reranker_scores = self.reranker(inputs)
@@ -1420,8 +1499,9 @@ class Seq2SeqAgent(BaseAgent):
                 visit_graphs[idx], last_vp, ob[0])
             ended[idx] = 1
 
-            for _ws in cur.world_states: # we don't collect ws0, this is fine.
-                clean_traj[idx]['trajectory'].append((_ws.viewpointId, _ws.heading, _ws.elevation))
+            for _ws in cur.world_states:  # we don't collect ws0, this is fine.
+                clean_traj[idx]['trajectory'].append(
+                    (_ws.viewpointId, _ws.heading, _ws.elevation))
                 self.clean_results[instr_id] = clean_traj[idx]
 
         return traj
@@ -1435,7 +1515,8 @@ class Seq2SeqAgent(BaseAgent):
 
     def beam_search(self, beam_size, load_next_minibatch=True, mask_undo=False):
         assert self.env.beam_size >= beam_size
-        world_states = self.env.reset(sort=True, beamed=True, load_next_minibatch=load_next_minibatch)
+        world_states = self.env.reset(
+            sort=True, beamed=True, load_next_minibatch=load_next_minibatch)
         obs = self.env.observe(world_states, beamed=True)
         batch_size = len(world_states)
 
@@ -1443,7 +1524,7 @@ class Seq2SeqAgent(BaseAgent):
         seq, seq_mask, seq_lengths = self._proc_batch(obs, beamed=True)
 
         # Forward through encoder, giving initial hidden state and memory cell for decoder
-        ctx,h_t,c_t = self.encoder(seq, seq_lengths)
+        ctx, h_t, c_t = self.encoder(seq, seq_lengths)
 
         completed = []
         for _ in range(batch_size):
@@ -1455,7 +1536,8 @@ class Seq2SeqAgent(BaseAgent):
                             observation=o[0],
                             flat_index=i,
                             last_action=-1,
-                            last_action_embedding=self.decoder.u_begin.view(-1),
+                            last_action_embedding=self.decoder.u_begin.view(
+                                -1),
                             action_count=0,
                             score=0.0, h_t=None, c_t=None, last_alpha=None)]
             for i, (ws, o) in enumerate(zip(world_states, obs))
@@ -1475,10 +1557,12 @@ class Seq2SeqAgent(BaseAgent):
             u_t_prev = torch.stack(u_t_list, dim=0)
             assert len(u_t_prev.shape) == 2
             flat_obs = flatten(obs)
-            f_t_list = self._feature_variables(flat_obs) # Image features from obs
+            f_t_list = self._feature_variables(
+                flat_obs)  # Image features from obs
             all_u_t, is_valid, is_valid_numpy = self._action_variable(flat_obs)
 
-            assert len(f_t_list) == 1, 'for now, only work with MeanPooled feature'
+            assert len(
+                f_t_list) == 1, 'for now, only work with MeanPooled feature'
             h_t, c_t, alpha, logit, alpha_v = self.decoder(
                 u_t_prev, all_u_t, f_t_list[0], h_t[flat_indices], c_t[flat_indices], ctx[beam_indices], seq_mask[beam_indices])
 
@@ -1500,7 +1584,8 @@ class Seq2SeqAgent(BaseAgent):
             #     action_indices = torch.from_numpy(np.full((log_probs.size()[0], 1), self.end_index))
             # else:
             #action_scores, action_indices = log_probs.topk(min(beam_size, logit.size()[1]), dim=1)
-            _, action_indices = masked_logit.data.topk(min(beam_size, logit.size()[1]), dim=1)
+            _, action_indices = masked_logit.data.topk(
+                min(beam_size, logit.size()[1]), dim=1)
             action_scores = log_probs.gather(1, action_indices)
             assert action_scores.size() == action_indices.size()
 
@@ -1522,17 +1607,19 @@ class Seq2SeqAgent(BaseAgent):
                                 continue
                             successors.append(
                                 InferenceState(prev_inference_state=inf_state,
-                                               world_state=world_state, # will be updated later after successors are pruned
-                                               observation=ob, # will be updated later after successors are pruned
+                                               world_state=world_state,  # will be updated later after successors are pruned
+                                               observation=ob,  # will be updated later after successors are pruned
                                                flat_index=flat_index,
                                                last_action=action_index,
-                                               last_action_embedding=all_u_t[flat_index, action_index].detach(),
+                                               last_action_embedding=all_u_t[flat_index, action_index].detach(
+                                               ),
                                                action_count=inf_state.action_count + 1,
                                                score=float(inf_state.score + action_score), h_t=None, c_t=None,
                                                last_alpha=alpha[flat_index].data)
                             )
                 start_index = end_index
-                successors = sorted(successors, key=lambda t: t.score, reverse=True)[:beam_size]
+                successors = sorted(successors, key=lambda t: t.score, reverse=True)[
+                    :beam_size]
                 all_successors.append(successors)
 
             successor_world_states = [
@@ -1550,11 +1637,13 @@ class Seq2SeqAgent(BaseAgent):
                 for successors in all_successors
             ]
 
-            successor_world_states = self.env.step(successor_world_states, successor_env_actions, successor_last_obs, beamed=True)
-            successor_obs = self.env.observe(successor_world_states, beamed=True)
+            successor_world_states = self.env.step(
+                successor_world_states, successor_env_actions, successor_last_obs, beamed=True)
+            successor_obs = self.env.observe(
+                successor_world_states, beamed=True)
 
             all_successors = structured_map(lambda inf_state, world_state, obs: inf_state._replace(world_state=world_state, observation=obs),
-                                   all_successors, successor_world_states, successor_obs, nested=True)
+                                            all_successors, successor_world_states, successor_obs, nested=True)
 
             # if all_successors[0]:
             #     print("t: %s\tstate: %s\taction: %s\tscore: %s" % (t, all_successors[0][0].world_state, all_successors[0][0].last_action, all_successors[0][0].score))
@@ -1592,12 +1681,14 @@ class Seq2SeqAgent(BaseAgent):
             assert this_completed
             this_trajs = []
             for inf_state in sorted(this_completed, key=lambda t: t.score, reverse=True)[:beam_size]:
-                path_states, path_observations, path_actions, path_scores, path_attentions = backchain_inference_states(inf_state)
+                path_states, path_observations, path_actions, path_scores, path_attentions = backchain_inference_states(
+                    inf_state)
                 # this will have messed-up headings for (at least some) starting locations because of
                 # discretization, so read from the observations instead
-                ## path = [(obs.viewpointId, state.heading, state.elevation)
-                ##         for state in path_states]
-                trajectory = [path_element_from_observation(ob) for ob in path_observations]
+                # path = [(obs.viewpointId, state.heading, state.elevation)
+                # for state in path_states]
+                trajectory = [path_element_from_observation(
+                    ob) for ob in path_observations]
                 this_trajs.append({
                     'instr_id': path_observations[0]['instr_id'],
                     'instr_encoding': path_observations[0]['instr_encoding'],
@@ -1609,12 +1700,13 @@ class Seq2SeqAgent(BaseAgent):
                     'attentions': path_attentions
                 })
             trajs.append(this_trajs)
-        traversed_lists = None # todo
+        traversed_lists = None  # todo
         return trajs, completed, traversed_lists
 
     def state_factored_search(self, completion_size, successor_size, load_next_minibatch=True, mask_undo=False, first_n_ws_key=4):
         assert self.env.beam_size >= successor_size
-        world_states = self.env.reset(sort=True, beamed=True, load_next_minibatch=load_next_minibatch)
+        world_states = self.env.reset(
+            sort=True, beamed=True, load_next_minibatch=load_next_minibatch)
         initial_obs = self.env.observe(world_states, beamed=True)
         batch_size = len(world_states)
 
@@ -1622,7 +1714,7 @@ class Seq2SeqAgent(BaseAgent):
         seq, seq_mask, seq_lengths = self._proc_batch(initial_obs, beamed=True)
 
         # Forward through encoder, giving initial hidden state and memory cell for decoder
-        ctx,h_t,c_t = self.encoder(seq, seq_lengths)
+        ctx, h_t, c_t = self.encoder(seq, seq_lengths)
 
         completed = []
         completed_holding = []
@@ -1636,15 +1728,15 @@ class Seq2SeqAgent(BaseAgent):
                                                       observation=o[0],
                                                       flat_index=None,
                                                       last_action=-1,
-                                                      last_action_embedding=self.decoder.u_begin.view(-1),
+                                                      last_action_embedding=self.decoder.u_begin.view(
+                                                          -1),
                                                       action_count=0,
                                                       score=0.0, h_t=h_t[i], c_t=c_t[i], last_alpha=None), True)}
             for i, (ws, o) in enumerate(zip(world_states, initial_obs))
         ]
 
         beams = [[inf_state for world_state, (inf_state, expanded) in sorted(instance_cache.items())]
-                 for instance_cache in state_cache] # sorting is a noop here since each instance_cache should only contain one
-
+                 for instance_cache in state_cache]  # sorting is a noop here since each instance_cache should only contain one
 
         # traversed_lists = None
         # list of inference states containing states in order of the states being expanded
@@ -1663,13 +1755,16 @@ class Seq2SeqAgent(BaseAgent):
             for instance_index, instance_states in enumerate(new_visited_inf_states):
                 last_expanded = last_expanded_list[instance_index]
                 # todo: if this passes, shouldn't need traversed_lists
-                assert last_expanded.world_state.viewpointId == traversed_lists[instance_index][-1].world_state.viewpointId
+                assert last_expanded.world_state.viewpointId == traversed_lists[
+                    instance_index][-1].world_state.viewpointId
                 for inf_state in instance_states:
-                    path_from_last_to_next = least_common_viewpoint_path(last_expanded, inf_state)
+                    path_from_last_to_next = least_common_viewpoint_path(
+                        last_expanded, inf_state)
                     # path_from_last should include last_expanded's world state as the first element, so check and drop that
                     assert path_from_last_to_next[0].world_state.viewpointId == last_expanded.world_state.viewpointId
                     assert path_from_last_to_next[-1].world_state.viewpointId == inf_state.world_state.viewpointId
-                    traversed_lists[instance_index].extend(path_from_last_to_next[1:])
+                    traversed_lists[instance_index].extend(
+                        path_from_last_to_next[1:])
                     last_expanded = inf_state
                 last_expanded_list[instance_index] = last_expanded
 
@@ -1690,12 +1785,14 @@ class Seq2SeqAgent(BaseAgent):
 
             u_t_prev = torch.stack(u_t_list, dim=0)
             assert len(u_t_prev.shape) == 2
-            f_t_list = self._feature_variables(flat_obs) # Image features from obs
+            f_t_list = self._feature_variables(
+                flat_obs)  # Image features from obs
             all_u_t, is_valid, is_valid_numpy = self._action_variable(flat_obs)
             h_t = torch.cat(h_t_list, dim=0)
             c_t = torch.cat(c_t_list, dim=0)
 
-            assert len(f_t_list) == 1, 'for now, only work with MeanPooled feature'
+            assert len(
+                f_t_list) == 1, 'for now, only work with MeanPooled feature'
             h_t, c_t, alpha, logit, alpha_v = self.decoder(
                 u_t_prev, all_u_t, f_t_list[0], h_t, c_t, ctx[beam_indices], seq_mask[beam_indices])
 
@@ -1717,7 +1814,8 @@ class Seq2SeqAgent(BaseAgent):
             #     action_indices = torch.from_numpy(np.full((log_probs.size()[0], 1), self.end_index))
             # else:
             #_, action_indices = masked_logit.data.topk(min(successor_size, logit.size()[1]), dim=1)
-            _, action_indices = masked_logit.data.topk(logit.size()[1], dim=1) # todo: fix this
+            _, action_indices = masked_logit.data.topk(
+                logit.size()[1], dim=1)  # todo: fix this
             action_scores = log_probs.gather(1, action_indices)
             assert action_scores.size() == action_indices.size()
 
@@ -1737,18 +1835,21 @@ class Seq2SeqAgent(BaseAgent):
                                 continue
                             successors.append(
                                 InferenceState(prev_inference_state=inf_state,
-                                               world_state=world_state, # will be updated later after successors are pruned
-                                               observation=flat_obs[flat_index], # will be updated later after successors are pruned
+                                               world_state=world_state,  # will be updated later after successors are pruned
+                                               # will be updated later after successors are pruned
+                                               observation=flat_obs[flat_index],
                                                flat_index=None,
                                                last_action=action_index,
-                                               last_action_embedding=all_u_t[flat_index, action_index].detach(),
+                                               last_action_embedding=all_u_t[flat_index, action_index].detach(
+                                               ),
                                                action_count=inf_state.action_count + 1,
                                                score=inf_state.score + action_score,
                                                h_t=h_t[flat_index], c_t=c_t[flat_index],
                                                last_alpha=alpha[flat_index].data)
                             )
                 start_index = end_index
-                successors = sorted(successors, key=lambda t: t.score, reverse=True)
+                successors = sorted(
+                    successors, key=lambda t: t.score, reverse=True)
                 all_successors.append(successors)
 
             successor_world_states = [
@@ -1766,7 +1867,8 @@ class Seq2SeqAgent(BaseAgent):
                 for successors in all_successors
             ]
 
-            successor_world_states = self.env.step(successor_world_states, successor_env_actions, successor_last_obs, beamed=True)
+            successor_world_states = self.env.step(
+                successor_world_states, successor_env_actions, successor_last_obs, beamed=True)
 
             all_successors = structured_map(lambda inf_state, world_state: inf_state._replace(world_state=world_state),
                                             all_successors, successor_world_states, nested=True)
@@ -1789,23 +1891,29 @@ class Seq2SeqAgent(BaseAgent):
                     ws_keys = successor.world_state[0:first_n_ws_key]
                     if successor.last_action == 0 or successor.action_count == self.episode_len:
                         if ws_keys not in instance_completed_holding or instance_completed_holding[ws_keys][0].score < successor.score:
-                            instance_completed_holding[ws_keys] = (successor, False)
+                            instance_completed_holding[ws_keys] = (
+                                successor, False)
                     else:
                         if ws_keys not in instance_cache or instance_cache[ws_keys][0].score < successor.score:
                             instance_cache[ws_keys] = (successor, False)
 
                 # third value: did this come from completed_holding?
-                uncompleted_to_consider = ((ws_keys, inf_state, False) for (ws_keys, (inf_state, expanded)) in instance_cache.items() if not expanded)
-                completed_to_consider = ((ws_keys, inf_state, True) for (ws_keys, (inf_state, expanded)) in instance_completed_holding.items() if not expanded)
+                uncompleted_to_consider = ((ws_keys, inf_state, False) for (
+                    ws_keys, (inf_state, expanded)) in instance_cache.items() if not expanded)
+                completed_to_consider = ((ws_keys, inf_state, True) for (
+                    ws_keys, (inf_state, expanded)) in instance_completed_holding.items() if not expanded)
                 import itertools
                 import heapq
-                to_consider = itertools.chain(uncompleted_to_consider, completed_to_consider)
-                ws_keys_and_inf_states = heapq.nlargest(successor_size, to_consider, key=lambda pair: pair[1].score)
+                to_consider = itertools.chain(
+                    uncompleted_to_consider, completed_to_consider)
+                ws_keys_and_inf_states = heapq.nlargest(
+                    successor_size, to_consider, key=lambda pair: pair[1].score)
 
                 new_beam = []
                 for ws_keys, inf_state, is_completed in ws_keys_and_inf_states:
                     if is_completed:
-                        assert instance_completed_holding[ws_keys] == (inf_state, False)
+                        assert instance_completed_holding[ws_keys] == (
+                            inf_state, False)
                         instance_completed_holding[ws_keys] = (inf_state, True)
                         if ws_keys not in instance_completed or instance_completed[ws_keys].score < inf_state.score:
                             instance_completed[ws_keys] = inf_state
@@ -1835,7 +1943,8 @@ class Seq2SeqAgent(BaseAgent):
 
         completed_list = []
         for this_completed in completed:
-            completed_list.append(sorted(this_completed.values(), key=lambda t: t.score, reverse=True)[:completion_size])
+            completed_list.append(sorted(this_completed.values(
+            ), key=lambda t: t.score, reverse=True)[:completion_size])
         completed_ws = [
             [inf_state.world_state for inf_state in comp_l]
             for comp_l in completed_list
@@ -1853,12 +1962,14 @@ class Seq2SeqAgent(BaseAgent):
             assert this_completed
             this_trajs = []
             for inf_state in this_completed:
-                path_states, path_observations, path_actions, path_scores, path_attentions = backchain_inference_states(inf_state)
+                path_states, path_observations, path_actions, path_scores, path_attentions = backchain_inference_states(
+                    inf_state)
                 # this will have messed-up headings for (at least some) starting locations because of
                 # discretization, so read from the observations instead
-                ## path = [(obs.viewpointId, state.heading, state.elevation)
-                ##         for state in path_states]
-                trajectory = [path_element_from_observation(ob) for ob in path_observations]
+                # path = [(obs.viewpointId, state.heading, state.elevation)
+                # for state in path_states]
+                trajectory = [path_element_from_observation(
+                    ob) for ob in path_observations]
                 this_trajs.append({
                     'instr_id': path_observations[0]['instr_id'],
                     'instr_encoding': path_observations[0]['instr_encoding'],
@@ -1886,11 +1997,11 @@ class Seq2SeqAgent(BaseAgent):
         self.cache_search = {}
         super(self.__class__, self).test()
 
-
     def test(self, use_dropout=False, feedback='argmax', allow_cheat=False, beam_size=1):
         ''' Evaluate once on each instruction in the current environment '''
-        if not allow_cheat: # permitted for purpose of calculating validation loss only
-            assert feedback in ['argmax', 'sample'] # no cheating by using teacher at test time!
+        if not allow_cheat:  # permitted for purpose of calculating validation loss only
+            # no cheating by using teacher at test time!
+            assert feedback in ['argmax', 'sample']
         self.feedback = feedback
         if use_dropout:
             self.encoder.train()
@@ -1926,33 +2037,34 @@ class Seq2SeqAgent(BaseAgent):
             it = tqdm.tqdm(it)
         except:
             pass
-        self.attn_t = np.zeros((n_iters,self.episode_len,self.env.batch_size,80))
+        self.attn_t = np.zeros(
+            (n_iters, self.episode_len, self.env.batch_size, 80))
         #import pdb;pdb.set_trace()
         '''Sanmi Edit:  Editing for loop to change hyperparameters of how often it runs'''
-        #for self.it_idx in it:
+        # for self.it_idx in it:
         ''' Every thing below shifted < 1'''
-        #if self.it_idx == 34:
+        # if self.it_idx == 34:
         #import pdb; pdb.set_trace()
         '''for opt in optimizers:
             opt.zero_grad()
         '''
         self.rollout()
-        #self._rollout_with_loss()
+        # self._rollout_with_loss()
 
-        #------Sanmi Edits 
-        #We have batches of 64 that run for 20 steps at most. 
-        # We collecte trajectory 
+        # ------Sanmi Edits
+        # We have batches of 64 that run for 20 steps at most.
+        # We collecte trajectory
         # for each batch, caculate the advantages and update once we
         # we have 1280 sets of (s,a).
         print("\nCaculating Advantages.._______________")
-        self.ppo_memory.calc_advantages() 
+        self.ppo_memory.calc_advantages()
 
-        #if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
+        # if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
         print("\nLearning -----------------------------")
-        self.ppo_memory.learn(self.decoder,optimizers,self.losses)
-        
-        #-------------
-        #Sanmi - ommented lines bleow. 
+        self.ppo_memory.learn(self.decoder, optimizers, self.losses)
+
+        # -------------
+        # Sanmi - ommented lines bleow.
         '''if type(self.loss) is torch.Tensor:
             self.loss.backward()
         for opt in optimizers:
@@ -1971,11 +2083,12 @@ class Seq2SeqAgent(BaseAgent):
         if self.prog_monitor:
             torch.save(self.prog_monitor.state_dict(), path + "_pm")
         if self.dev_monitor:
-            torch.save(self.dev_monitor.state_dict(), path+ "_dv")
+            torch.save(self.dev_monitor.state_dict(), path + "_dv")
         if self.bt_button:
-            torch.save(self.bt_button.state_dict(), path+ "_bt")
+            torch.save(self.bt_button.state_dict(), path + "_bt")
         if self.objLabelEncoder:
-            torch.save(self.objLabelEncoder.state_dict(), path+'_objLabelEncoder')
+            torch.save(self.objLabelEncoder.state_dict(),
+                       path+'_objLabelEncoder')
 
     def load(self, path, load_scorer=False, **kwargs):
         ''' Loads parameters (but not training state) '''
@@ -1990,23 +2103,32 @@ class Seq2SeqAgent(BaseAgent):
             self.dev_monitor.load_state_dict(torch.load(path+"_dv", **kwargs))
         if self.bt_button:
             if os.path.isfile(path + '_bt'):
-                self.bt_button.load_state_dict(torch.load(path+"_bt", **kwargs))
+                self.bt_button.load_state_dict(
+                    torch.load(path+"_bt", **kwargs))
         if self.objLabelEncoder:
-            self.objLabelEncoder.load_state_dict(torch.load(path+"_objLabelEncoder", **kwargs))
+            self.objLabelEncoder.load_state_dict(
+                torch.load(path+"_objLabelEncoder", **kwargs))
 
     def modules(self):
         _m = [self.encoder, self.decoder]
-        if self.prog_monitor: _m.append(self.prog_monitor)
-        if self.dev_monitor: _m.append(self.dev_monitor)
-        if self.bt_button: _m.append(self.bt_button)
-        if self.scorer: _m += self.scorer.modules()
+        if self.prog_monitor:
+            _m.append(self.prog_monitor)
+        if self.dev_monitor:
+            _m.append(self.dev_monitor)
+        if self.bt_button:
+            _m.append(self.bt_button)
+        if self.scorer:
+            _m += self.scorer.modules()
         return _m
 
     def modules_paths(self, base_path):
         _mp = list(self._encoder_and_decoder_paths(base_path))
-        if self.prog_monitor: _mp.append(base_path + "_pm")
-        if self.scorer: _mp += self.scorer.modules_path(base_path)
-        if self.bt_button: _mp += _mp.append(base_path + "_bt")
+        if self.prog_monitor:
+            _mp.append(base_path + "_pm")
+        if self.scorer:
+            _mp += self.scorer.modules_path(base_path)
+        if self.bt_button:
+            _mp += _mp.append(base_path + "_bt")
         return _mp
 
     def get_loss_info(self):
@@ -2015,8 +2137,8 @@ class Seq2SeqAgent(BaseAgent):
         dv_loss = np.average(self.dv_losses)
         pm_loss = np.average(self.pm_losses)
         loss_str = 'loss {:.3f}|ce {:.3f}|pm {:.3f}|dv {:.3f} '.format(
-                val_loss, ce_loss, pm_loss, dv_loss)
+            val_loss, ce_loss, pm_loss, dv_loss)
         return loss_str, {'loss': val_loss,
-                          'ce' : ce_loss,
-                          'pm' : pm_loss,
-                          'dv' : dv_loss}
+                          'ce': ce_loss,
+                          'pm': pm_loss,
+                          'dv': dv_loss}
