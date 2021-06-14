@@ -913,7 +913,7 @@ class Seq2SeqAgent(BaseAgent):
             all_u_t, is_valid, _ = self._action_variable(obs) # t=0, how
 
             # 1. local scorer
-            h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v = self.decoder(
+            h_t, c_t, t_ground, v_ground, alpha_t, logit, alpha_v,value = self.decoder(
                 u_t_prev, all_u_t, f_t_list[0], prev_h_t, prev_c_t, ctx, seq_mask)
 
             # 2. prog monitor

@@ -287,6 +287,9 @@ def make_follower(args, vocab):
         scorer_exists = osp.isfile(args.load_follower + '_scorer_enc')
         agent.load(args.load_follower, load_scorer=(args.load_scorer is '' and scorer_exists))
         print(colorize('load follower '+ args.load_follower))
+    
+    ''' Load modes weights except for decoder'''
+    agent.load_ppo()
 
     return agent
 

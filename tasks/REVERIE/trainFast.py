@@ -25,10 +25,13 @@ from follower import Seq2SeqAgent, AgentMemory
 from scorer import Scorer
 # import evalFast
 
+from tensorboardX import SummaryWriter
+writer = SummaryWriter()
+
 from vocab import SUBTRAIN_VOCAB, TRAINVAL_VOCAB, TRAIN_VOCAB
 
 MAX_INPUT_LENGTH = 80 # TODO make this an argument
-max_episode_len = 13 #10
+max_episode_len = 20 #10
 
 
 hidden_size = 512
@@ -105,7 +108,7 @@ def train(args, train_env, agent, optimizers, n_iters, log_every=log_every, val_
 
         # Train for log_every interval
         env_name = 'train'
-        agent.train(optimizers, interval, feedback=args.feedback_method)
+        agent.train(optimizers, interval, writer, feedback=args.feedback_method)
         #print("Cuda Memory:", torch.cuda.memory_allocated())
         _loss_str, losses = agent.get_loss_info()
         loss_str += env_name + ' ' + _loss_str
@@ -291,6 +294,8 @@ def make_follower(args, vocab):
         agent.load(args.load_follower, load_scorer=(args.load_scorer is '' and scorer_exists))
         print(colorize('load follower '+ args.load_follower))
 
+    # This is added coded that loads the pretrianed weights for everthign but the decoder. 
+    agent.load_ppo()
     return agent
 
 def make_env_and_models(args, train_vocab_path, train_splits, test_splits):
@@ -388,19 +393,25 @@ def train_val(args):
 
     #optimizers = [optim.Adam(filter_param(m), lr=learning_rate,
     #    weight_decay=weight_decay) for m in m_dict[args.grad] if len(filter_param(m)) ]
+    '''
+    * Here I load the optimizer for the decoder only. All weights for the other networks
+    are loaded from pretrained models in Load_ppo(). 
+    '''
     optimizers = []
     for m in m_dict[args.grad]:
         if len(filter_param(m)):
             if len(filter_param(m)) == 18:
+                print("Optimizer set for Model:", m)
                 temp = optim.Adam(filter_param(m), lr=learning_rate_ppo, weight_decay=weight_decay)
                 optimizers.append(temp)
-            
+    '''        
             else:
                 temp = optim.Adam(filter_param(m), lr=learning_rate, weight_decay=weight_decay)
                 optimizers.append(temp)
 
     optimizers.append(optim.Adam(filter_param(agent.objLabelEncoder), lr=learning_rate,
         weight_decay=weight_decay) )
+    '''
     if args.use_pretraining:
         train(args, pretrain_env, agent, optimizers,
               args.n_pretrain_iters, val_envs=val_envs)
@@ -409,6 +420,7 @@ def train_val(args):
 
     train(args, train_env, agent, optimizers,
           args.n_iters, val_envs=val_envs)
+    writer.close()
 
 def make_arg_parser():
     parser = argparse.ArgumentParser()

@@ -13,6 +13,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.distributions as D
+import time
 
 from utilsFast import vocab_pad_idx, vocab_eos_idx, flatten, structured_map, try_cuda
 from utilsFast import PriorityQueue
@@ -305,19 +306,42 @@ class AgentMemory():
         self.batch_size = ppo_batch_size
         self.mini_epoch = ppo_mini_epoch
     
-    def _caculate_reward(self,action,target_action, target_distance=0):
-        if action == target_action:
-            distance_reward = 1/(target_distance+.1) *20
-            reward = 5 + distance_reward
-            #print("Reward:", reward)
-            return reward
-        else:
-            distance_reward = 1/(target_distance+.1) *20
-            reward = -7 + distance_reward
-            #print("Reward:", reward)
-            return reward
+    def _caculate_reward(self,action,target_action, target_distance,target_progress):
+        distance_reward = 1/(target_distance+0.1) *10
+        progress_reward = target_progress * 20
+        reward = 0 
+        '''
+        *Target progress starts at 0 and moves to 1 once at goal locaiton. It uses the shortest path.
+        If you move further form the goal from your initial starting locaiton, target progress 
+        becomes negative. 
+        *Target_distance is the distance to the goal. 
+        *Target_action is the correct action to take given the obs. 
+        *Aciton is what the network selects given the obs. 
+        '''
 
-    def store_history(self, obs, actions, probs, vals, target_actions, target_distances):
+        reward += progress_reward
+        
+        if target_progress == 1 and action == 0:
+            reward += 20
+            
+        if target_distance > 3.0:
+            if action == 0:
+                reward +=  -50
+        else 
+            reward += distance_reward  
+        '''
+        if action == target_action:
+            reward += 10 
+        else:
+            reward = -7 
+        '''
+        return reward
+
+    def store_history(self, obs, actions, probs, vals, target_actions, target_distances,target_progress):
+        reward_list = []
+        target_d = []
+        target_p = []
+        target_a = []
         for i in range(0,len(actions)):
 
             if target_actions[i] == -1:
@@ -327,9 +351,12 @@ class AgentMemory():
                 done = True
             else:
                 done = False
-            
-            reward = self._caculate_reward(actions[i], target_actions[i],target_distances[i])
-
+             
+            reward = self._caculate_reward(actions[i], target_actions[i],target_distances[i], target_progress[i])
+            #reward_list.append(reward)
+            #target_d.append(target_distances[i])
+            #target_p.append(target_progs[i])
+            #target_a.append(target_actions[i].item())
             ob = (obs[0][i],obs[1][i],obs[2][i],obs[3][i],obs[4][i],obs[5][i], obs[6][i])
             i_str = str(i) 
             self.trajectories[i_str][0].append(ob) 
@@ -338,6 +365,10 @@ class AgentMemory():
             self.trajectories[i_str][3].append(vals[i].item())
             self.trajectories[i_str][4].append(reward)
             self.trajectories[i_str][5].append(done)
+        #print("----")
+        #print("target actions:",target_a)
+        #print("target progs:",target_p)
+        #print("target distance:",target_d)
 
     def clear_history(self):
         self.obs = []
@@ -472,12 +503,13 @@ class AgentMemory():
                 self.advantages,\
                 batch_start_6
 
-    def learn(self, decoder, optimizers,losses_list, policy_clip=0.2): 
+    def learn(self, decoder, optimizers,losses_list,writer, policy_clip=0.2): 
         states_arr, action_arr, old_probs_arr, vals_arr,\
             reward_arr, done_arr, advantages_arr, batches = self.generate_mixed_batch()
            
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-            
+        
+        self.mini_epoch = 10
         for _ in range(self.mini_epoch):
             for i in range(0,len(batches)):
                 start = batches[i]
@@ -501,8 +533,8 @@ class AgentMemory():
                 #start learning
                 old_probs = torch.tensor(old_probs)
                 actions = torch.tensor(actions)
-                advantages = torch.tensor(advantages).float().to(device)
-                #advantages = (adv - torch.mean(adv)) / (torch.std(adv) + 1e-8)
+                adv = torch.tensor(advantages).float().to(device)
+                advantages = (adv - torch.mean(adv)) / (torch.std(adv) + 1e-8)
 
 
                 u_t_prev, all_u_t, f_t_list, h_t, c_t, ctx, seq_mask = [],[],[],[],[],[],[]
@@ -534,8 +566,9 @@ class AgentMemory():
                 new_probs = dist.log_prob(actions)
                 
                 old_probs = old_probs.cuda()
-                ratio = new_probs - old_probs
-                prob_ratio = (ratio).exp()
+                #ratio = new_probs - old_probs
+                #prob_ratio = (ratio).exp()
+                prob_ratio = new_probs.exp() / old_probs.exp()
  
                 weighted_probs = advantages * prob_ratio
                 weignte_clipped_probs = torch.clamp(prob_ratio, 1-policy_clip,1+policy_clip)\
@@ -548,6 +581,12 @@ class AgentMemory():
                 critic_loss =  critic_loss.mean()
                 
                 loss = ppo_loss + 0.5*critic_loss # - (0.01* dist.entropy().mean())
+                #print("total loss", loss.item())
+                #print(" ppo loss", ppo_loss.item())
+                #print("critic loss", critic_loss.item())
+                ix = time.time()
+                writer.add_scalar('PPo_Loss', ppo_loss.item(),ix)
+                writer.add_scalar('Critic_loss', critic_loss.item(),ix)
                 '''
                 try:
                     print("loss:", loss)
@@ -558,12 +597,29 @@ class AgentMemory():
 
                 for opt in optimizers:
                     opt.zero_grad()
+                
                 loss.backward()
+                
+                #Taking care of any Nan values 
+                #p = 0.0 for p in decoder.parameters() if p.requires_grad and p.grad[p.grad != p.grad 
+                for param in decoder.parameters():
+                    if param.requires_grad:
+                        param.grad[param.grad != param.grad] = 0.0
+                
                 for opt in optimizers:
                     opt.step() 
+
                 losses_list.append(loss.item())
                 del loss, critic_loss, ppo_loss, dist, h_t,c_t,t_ground,v_ground,logit,alpha_t,alpha_v,value 
 
+
+        #print("Total rewards for batch summed:", sum(reward_arr))
+        ix = time.time()
+        writer.add_scalar('Loss_batch_avg', np.average(losses_list),ix)
+        writer.add_scalar('Reward_batch', sum(reward_arr)/len(reward_arr),ix)
+        writer.add_histogram('Action_selection', action_arr,ix)
+        print("action_arr", action_arr)
+        print("reward_batch", sum(reward_arr)/len(reward_arr))
         states_arr.clear()
         action_arr.clear()
         old_probs_arr.clear()
@@ -796,10 +852,13 @@ class Seq2SeqAgent(BaseAgent):
         return try_cuda(torch.tensor(t, requires_grad=False)), num_elem
     
     def _distance_target(self, obs, ended):
-        t = [None] * len(obs)
+        t_d = [None] * len(obs)
+        t_p = [None] * len(obs)
+        
         for i,ob in enumerate(obs):
-            t[i] = ob['distance'][0] if not ended[i] else -1 
-        return try_cuda(torch.tensor(t, requires_grad=False))
+            t_d[i] = ob['distance'][0] if not ended[i] else -1 
+            t_p[i] = ob['progress'][0] if not ended[i] else -1 
+        return t_d, t_p
 
     def _progress_soft_align(self, alpha_t, seq_lengths):
         if not hasattr(self,'dummy'):
@@ -996,10 +1055,10 @@ class Seq2SeqAgent(BaseAgent):
                     self.dv_loss += dv_criterion(dev_score, target_score)
                     last_dev = dev_score
 
-            # scorer logit
+            # scorer 
             if self.scorer:
                 # encode traj
-                proposal_h, proposal_c = self.scorer.prepare_proposals(
+                proposal_h, proposal_c = self.corer.prepare_proposals(
                         traj_h, traj_c, f_t_list[0], all_u_t)
 
                 # feed to scorer
@@ -1086,13 +1145,21 @@ class Seq2SeqAgent(BaseAgent):
             ppo_ht, ppo_ct = h_t, c_t
             ppo_obs = [u_t_prev.detach(), all_u_t.detach(), f_t_list[0].detach(), ppo_ht.detach(),\
                     ppo_ct.detach(), ctx.detach(), seq_mask.detach()]
-            target_distance = self._distance_target(obs, ended)
-            self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance)
+            
+            #print("target action:", target)
+            #print("action:", a_t)
+            #print("target progress:", target_progress)
+            #print("target distance:", target_distance)
+            
+            #self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance)
             #print("\nDone -------- Storing PPO Memory ----------")
             #========================================  
             # update
             world_states = self.env.step(world_states, env_action, obs)
             obs = self.env.observe(world_states)
+            target_distance,target_progress = self._distance_target(obs, ended)
+            #print("target progress:", target_progress)
+            self.ppo_memory.store_history(ppo_obs, a_t , probs, value, target, target_distance,target_progress)
             # print("t: %s\tstate: %s\taction: %s\tscore: %s" % (t, world_states[0], a_t.item(), sequence_scores[0]))
 
             # Save trajectory output
@@ -1113,7 +1180,8 @@ class Seq2SeqAgent(BaseAgent):
             # Early exit if all ended
             if ended.all():
                 break
-
+        #print("---------episode end")
+        #import pdb; pdb.set_trace()
         # per step loss
         if self.phase == 'train':
             if self.prog_monitor or self.soft_align:
@@ -1906,7 +1974,7 @@ class Seq2SeqAgent(BaseAgent):
         self.set_beam_size(beam_size)
         return super(self.__class__, self).test()
 
-    def train(self, optimizers, n_iters, feedback='teacher'):
+    def train(self, optimizers, n_iters,writer, feedback='teacher'):
         ''' Train for a given number of iterations '''
         self.phase = 'train'
         self.feedback = feedback
@@ -1949,7 +2017,7 @@ class Seq2SeqAgent(BaseAgent):
 
         #if len(self.ppo_memory.obs) >= self.ppo_memory.memory_size:
         print("\nLearning -----------------------------")
-        self.ppo_memory.learn(self.decoder,optimizers,self.losses)
+        self.ppo_memory.learn(self.decoder,optimizers,self.losses,writer)
         
         #-------------
         #Sanmi - ommented lines bleow. 
@@ -1976,6 +2044,18 @@ class Seq2SeqAgent(BaseAgent):
             torch.save(self.bt_button.state_dict(), path+ "_bt")
         if self.objLabelEncoder:
             torch.save(self.objLabelEncoder.state_dict(), path+'_objLabelEncoder')
+
+    def load_ppo(self):
+        path = '/home/users/aadeleye/Workspace/REVERIE/tasks/REVERIE/experiments/releaseCheck_pretrained/snapshots/NP_cg_pm_sample2step_imagenet_mean_pooled_1heads_train_iter_10900' 
+        enc_path = path + '_enc'
+        #decoder_path = path + '_dec'
+        pm_path = path + '_pm'
+        objL_path = path + '_objLabelEncoder'
+        self.encoder.load_state_dict(torch.load(enc_path))
+        self.prog_monitor.load_state_dict(torch.load(pm_path))
+        self.objLabelEncoder.load_state_dict(torch.load(objL_path))
+        #self.decoder.load_state_dict(torch.load(decoder_path))
+        
 
     def load(self, path, load_scorer=False, **kwargs):
         ''' Loads parameters (but not training state) '''

@@ -650,8 +650,33 @@ class AttnDecoderLSTM(nn.Module):
 class LanMLP(nn.Module):
     def __init__(self):
         super(LanMLP,self).__init__()
+'''
+* I wanted to create a separete value network and actor network from the main decoder network. 
+These networks would take in the X and V' discribed in secitn 4.3 of the papre and learn the
+parametrs for the soft atention networks "WhSoftDotAttention". 
+*The main reason for this is that the state space for the Actor and Critic may be differnet. 
+this would be incorrect and needs to be verified.
+* This seciton was not completed and is left for future work. 
 
-
+class ValueNetwork(nn.Module):
+    def __init__(self, embedding_size,hidden_size):
+        super(ValueNetwork,self).__init__() 
+        self.value_net = nn.Linear(in_features=embedding_size+hidden_size,out_features=1)
+    
+    def foward(self,att_t, att_v):
+        val_concat_input = torch.cat((attn_text, attn_vision), 1)
+        value = self.value_net(val_concat_input)
+        return value 
+class ActorNetwork(nn.Module)
+    def __init__(self, embedding_size,hidden_size):
+        super(ActorNetwork,self).__init__() 
+        self.value_net = nn.Linear(in_features=embedding_size+hidden_size,out_features=1)
+    
+    def foward(self,att_t, att_v):
+        val_concat_input = torch.cat((attn_text, attn_vision), 1)
+        value = self.value_net(val_concat_input)
+        return value 
+'''
 class CogroundDecoderLSTM(nn.Module):
     def __init__(self, embedding_size, hidden_size, dropout_ratio,
                  feature_size=2048+128, image_attention_layers=None,
@@ -669,6 +694,7 @@ class CogroundDecoderLSTM(nn.Module):
         self.positional_encoding = PositionalEncoding(hidden_size, dropout=0)
         self.visual_attention_layer = WhSoftDotAttention(hidden_size,
                                         visual_hidden_size)
+        '''
         self.visual_mlp = nn.Sequential(
                 nn.BatchNorm1d(feature_size),
                 nn.Linear(feature_size, visual_hidden_size),
@@ -676,12 +702,11 @@ class CogroundDecoderLSTM(nn.Module):
                 nn.Dropout(dropout_ratio),
                 nn.ReLU())
         '''
-        Quan suggested drobing batchNorm for RL algorithoms
-        self.visual_mlp = nn.Sequential(
-                nn.Linear(feature_size, visual_hidden_size),
+        #Quan suggested drobing batchNorm for RL algorithoms
+        self.visual_mlp = nn.Sequential(nn.Linear(feature_size, visual_hidden_size),
                 nn.Dropout(dropout_ratio),
                 nn.ReLU())
-        '''
+        #'''
         self.action_attention_layer = WhSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         #self.action_attention_layer = VisualSoftDotAttention(hidden_size+hidden_size, visual_hidden_size)
         self.sm = nn.Softmax(dim=1)

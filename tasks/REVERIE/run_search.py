@@ -244,7 +244,7 @@ def main(args):
 if __name__ == "__main__":
     jobs=['search', 'test']
     experiment_name = 'releaseCheck'
-    experiment_name = 'ppo_exp_test'
+    experiment_name = 'ppo_pretrained_progress_nobatchnorm_lr5_nodecay'
     load_follower='tasks/REVERIE/experiments/%s/snapshots/'%experiment_name+\
         'NP_cg_pm_sample2step_imagenet_mean_pooled_1heads_train_iter_10900'
     load_follower='tasks/REVERIE/experiments/%s/snapshots/'%experiment_name+\
